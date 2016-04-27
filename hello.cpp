@@ -1,4 +1,5 @@
 #include <gtk/gtk.h>
+#include "iridescent-map.h"
 
 static void
 activate (GtkApplication* app,
@@ -13,8 +14,8 @@ activate (GtkApplication* app,
 	GtkWidget *button_box = gtk_button_box_new (GTK_ORIENTATION_HORIZONTAL);
 	gtk_container_add (GTK_CONTAINER (window), button_box);
 
-	GtkWidget *button = gtk_button_new_with_label ("Hello World");
-	gtk_container_add (GTK_CONTAINER (button_box), button);
+	GtkWidget *test = GTK_WIDGET(g_object_new(IRIDESCENT_MAP_TYPE,NULL));
+	gtk_container_add (GTK_CONTAINER (button_box), test);
 
 	gtk_widget_show_all (window);
 }
