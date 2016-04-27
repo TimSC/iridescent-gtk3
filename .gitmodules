@@ -1,0 +1,3 @@
+[submodule "iridescent-map"]
+	path = iridescent-map
+	url = https://github.com/TimSC/iridescent-map.git
