@@ -16,6 +16,8 @@ typedef struct _IridescentMapClass IridescentMapClass;
 struct _IridescentMap
 {
     GtkDrawingArea parent_instance;
+
+	gpointer userData;
 };
 
 struct _IridescentMapClass

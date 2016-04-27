@@ -9,6 +9,8 @@ static void iridescent_map_init( IridescentMap* self )
 {
     GdkRGBA c;
     GtkWidget *widget;
+	
+	self->userData = (gpointer)1;
 
     gdk_rgba_parse(&c, "blue");
     widget = GTK_WIDGET(self);
@@ -35,8 +37,11 @@ void iridescent_map_get_preferred_width(GtkWidget *widget,
 gboolean iridescent_map_draw(GtkWidget *widget,
                                 cairo_t *cr)
 {
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+
 	GtkAllocation allocation;
 	gtk_widget_get_allocation (widget, &allocation);
+	cout << (unsigned long)self->userData << endl;
 
 	cairo_save(cr);
 
