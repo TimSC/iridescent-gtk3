@@ -19,76 +19,75 @@ G_DEFINE_TYPE( IridescentMap, iridescent_map, GTK_TYPE_DRAWING_AREA )
 class _IridescentMapPrivate
 {
 public:
-	OrganisedLabelsMap organisedLabelsMap;
-	OrganisedSurfaceMap organisedSurfaceMap;
+	OrganisedLabelsMap labelInfoMap;
+	OrganisedSurfaceMap organisedShapeMap;
+	OrganisedSurfaceMap organisedLabelMap;
+
 
 	_IridescentMapPrivate()
 	{
-		// ** Collect labels from off screen tiles	
-		cairo_surface_t *offScreenSurface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 
 		for(int x=2034; x <= 2036; x++)
+		{
 			for(int y=1373; y<= 1375; y++)
 			{
-				if(x == 2035 && y == 1374) continue;
+
+				// ** Render without labels and collect label info **
+
+				cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 				FeatureStore featureStore;
 				ReadInput(12, x, y, featureStore);
+
 				class SlippyTilesTransform slippyTilesTransform(12, x, y);
 
-				class DrawLibCairoPango drawlib(offScreenSurface);	
+				class DrawLibCairoPango drawlib(surface);	
 				class MapRender mapRender(&drawlib);
 				LabelsByImportance organisedLabels;
-			
-				mapRender.Render(12, featureStore, false, true, slippyTilesTransform, organisedLabels);
-
-				OrganisedLabelsMap::iterator it = organisedLabelsMap.find(x);
-				if(it == organisedLabelsMap.end())
-					organisedLabelsMap[x] = map<int, LabelsByImportance>();
-				map<int, LabelsByImportance> &col = organisedLabelsMap[x];
-				col[y] = organisedLabels;
-			}
-
-		cairo_surface_destroy(offScreenSurface);
-
-		// ** Render without labels and collect label info **
-
-		cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
-		FeatureStore featureStore;
-		ReadInput(12, 2035, 1374, featureStore);
-
-		class SlippyTilesTransform slippyTilesTransform(12, 2035, 1374);
-		//class SlippyTilesTransform slippyTilesTransform(14, 8143, 5498);
-
-		class DrawLibCairoPango drawlib(surface);	
-		class MapRender mapRender(&drawlib);
-		LabelsByImportance organisedLabels;
 	
-		mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
-		organisedLabelsMap[2035][1374] = organisedLabels;
+				mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
+				labelInfoMap[x][y] = organisedLabels;
 
-		// ** Render labels **
-		RenderLabelList labelList;
-		RenderLabelListOffsets labelOffsets;
-		for(int y=1373; y<= 1375; y++)
-		{
-			for(int x=2034; x <= 2036; x++)
-			{
-				map<int, LabelsByImportance> &col = organisedLabelsMap[x];
-				labelList.push_back(col[y]);
-				labelOffsets.push_back(std::pair<double, double>(640.0*(x-2035), 640.0*(y-1374)));
+				organisedShapeMap[x][y] = surface;
+
 			}
 		}
 
-		mapRender.RenderLabels(labelList, labelOffsets);
+		// ** Render labels **
 
-		organisedSurfaceMap[2035] = map<int, cairo_surface_t *>();
-		organisedSurfaceMap[2035][1374] = surface;
+		for(int x=2035; x <= 2035; x++)
+		{
+			for(int y=1374; y<= 1374; y++)
+			{
+
+				RenderLabelList labelList;
+				RenderLabelListOffsets labelOffsets;
+
+				for(int y2=1373; y2<= 1375; y2++)
+				{
+					for(int x2=2034; x2 <= 2036; x2++)
+					{
+						map<int, LabelsByImportance> &col = labelInfoMap[x2];
+						labelList.push_back(col[y2]);
+						labelOffsets.push_back(std::pair<double, double>(640.0*(x2-2035), 640.0*(y2-1374)));
+					}
+				}
+
+				cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
+				class DrawLibCairoPango drawlib(surface);	
+				class MapRender mapRender(&drawlib);
+				mapRender.RenderLabels(labelList, labelOffsets);
+
+				organisedLabelMap[x][y] = surface;
+			}
+		}
+
+
 	}
 
 	virtual ~_IridescentMapPrivate()
 	{
-		for(OrganisedSurfaceMap::iterator it = organisedSurfaceMap.begin();
-			it != organisedSurfaceMap.end(); it++)
+		for(OrganisedSurfaceMap::iterator it = organisedShapeMap.begin();
+			it != organisedShapeMap.end(); it++)
 		{
 			for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
 				it2 != it->second.end(); it2++)
@@ -153,8 +152,8 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 	cairo_save(cr);
 	
-	for(OrganisedSurfaceMap::iterator it = privateData->organisedSurfaceMap.begin();
-		it != privateData->organisedSurfaceMap.end(); it++)
+	for(OrganisedSurfaceMap::iterator it = privateData->organisedShapeMap.begin();
+		it != privateData->organisedShapeMap.end(); it++)
 	{
 		int x = it->first;
 		for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
@@ -164,25 +163,64 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			cairo_surface_t **surface = &(it2->second);
 			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
 			
-			/*if(properties.texx != 0.0 || properties.texy != 0.0)
-			{
-				cairo_matrix_t mat;
-				cairo_matrix_init_translate (&mat, properties.texx, properties.texy);
-				cairo_pattern_set_matrix(pattern, &mat);
-			}*/
+			int dx = x - 2035;
+			int dy = y - 1374;
+			double px = dx * 640.0;
+			double py = dy * 640.0;
+
+			cairo_matrix_t mat;
+			cairo_matrix_init_translate (&mat, -px, -py);
+			cairo_pattern_set_matrix(pattern, &mat);
 
 			cairo_set_source (cr,
                       pattern);
 			cairo_pattern_destroy (pattern);
 
-			cairo_move_to(cr, 0.0, 
-						0.0);
-			cairo_line_to(cr, 640, 
-						0);
-			cairo_line_to(cr, 640, 
-						640);
-			cairo_line_to(cr, 0, 
-						640);
+			cairo_move_to(cr, px, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py + 640);
+			cairo_line_to(cr, px + 0, 
+						py + 640);
+			cairo_fill (cr);
+
+		}
+	}
+
+	for(OrganisedSurfaceMap::iterator it = privateData->organisedLabelMap.begin();
+		it != privateData->organisedLabelMap.end(); it++)
+	{
+		int x = it->first;
+		for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
+			it2 != it->second.end(); it2++)
+		{
+			int y = it2->first;
+			cairo_surface_t **surface = &(it2->second);
+			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
+			
+			int dx = x - 2035;
+			int dy = y - 1374;
+			double px = dx * 640.0;
+			double py = dy * 640.0;
+
+			cairo_matrix_t mat;
+			cairo_matrix_init_translate (&mat, -px, -py);
+			cairo_pattern_set_matrix(pattern, &mat);
+
+			cairo_set_source (cr,
+                      pattern);
+			cairo_pattern_destroy (pattern);
+
+			cairo_move_to(cr, px, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py + 640);
+			cairo_line_to(cr, px + 0, 
+						py + 640);
 			cairo_fill (cr);
 
 		}
