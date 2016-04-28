@@ -15,12 +15,23 @@ typedef map<int, map<int, LabelsByImportance> > OrganisedLabelsMap;
 
 G_DEFINE_TYPE( IridescentMap, iridescent_map, GTK_TYPE_DRAWING_AREA )
 
+class _IridescentMapPrivate
+{
+public:
+	int stuff;
+
+	_IridescentMapPrivate()
+	{
+		stuff = 47;
+	}
+};
+
 static void iridescent_map_init( IridescentMap* self )
 {
     GdkRGBA c;
     GtkWidget *widget;
 	
-	self->userData = (gpointer)1;
+	self->privateData = (gpointer)new class _IridescentMapPrivate();
 
     gdk_rgba_parse(&c, "blue");
     widget = GTK_WIDGET(self);
@@ -90,6 +101,16 @@ static void iridescent_map_init( IridescentMap* self )
 
 }
 
+void iridescent_map_destroy(GtkWidget *widget)
+{
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	if(self->privateData != NULL)
+		delete (_IridescentMapPrivate *) self->privateData;
+	self->privateData = NULL;
+
+	GTK_WIDGET_CLASS (iridescent_map_parent_class)->destroy (widget);
+}
+
 void iridescent_map_get_preferred_height(GtkWidget *widget,
                                          gint *minimum_height,
                                          gint *natural_height)
@@ -113,7 +134,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 	GtkAllocation allocation;
 	gtk_widget_get_allocation (widget, &allocation);
-	cout << (unsigned long)self->userData << endl;
+	cout << ((_IridescentMapPrivate *)self->privateData)->stuff << endl;
 
 	cairo_save(cr);
 
@@ -137,5 +158,6 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->get_preferred_height = iridescent_map_get_preferred_height;
 	widget_class->get_preferred_width = iridescent_map_get_preferred_width;
 	widget_class->draw = iridescent_map_draw;
+	widget_class->destroy = iridescent_map_destroy;
 }
 

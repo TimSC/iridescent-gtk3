@@ -17,7 +17,7 @@ struct _IridescentMap
 {
     GtkDrawingArea parent_instance;
 
-	gpointer userData;
+	gpointer privateData;
 };
 
 struct _IridescentMapClass
