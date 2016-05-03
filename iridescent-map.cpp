@@ -13,6 +13,7 @@ using namespace std;
 
 typedef map<int, map<int, LabelsByImportance> > OrganisedLabelsMap;
 typedef map<int, map<int, cairo_surface_t *> > OrganisedSurfaceMap;
+typedef std::pair<int, int> IntPair;
 
 G_DEFINE_TYPE( IridescentMap, iridescent_map, GTK_TYPE_DRAWING_AREA )
 
@@ -22,10 +23,16 @@ public:
 	OrganisedLabelsMap labelInfoMap;
 	OrganisedSurfaceMap organisedShapeMap;
 	OrganisedSurfaceMap organisedLabelMap;
-
+	std::map<int, IntPair> pressPos;
+	double currentX, currentY;
+	double preMoveX, preMoveY;
 
 	_IridescentMapPrivate()
 	{
+		this->currentX = 2035.0;
+		this->currentY = 1374.0;
+		this->preMoveX = 0.0;
+		this->preMoveY = 0.0;
 
 		for(int x=2034; x <= 2036; x++)
 		{
@@ -236,21 +243,47 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 gboolean iridescent_map_button_press_event (GtkWidget *widget,
 				 GdkEventButton *event)
 {
-	cout << "Press" << endl;
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+	privateData->pressPos[event->button] = IntPair(event->x, event->y);
+
+	std::map<int, IntPair>::iterator it = privateData->pressPos.find(1);
+	if(it != privateData->pressPos.end())
+	{
+		privateData->preMoveX = privateData->currentX;
+		privateData->preMoveY = privateData->currentY;
+	}
+
 	return true;
 }
 
 gboolean iridescent_map_button_release_event (GtkWidget *widget,
 				 GdkEventButton *event)
 {
-	cout << "Release" << endl;
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+
+	std::map<int, IntPair>::iterator it = privateData->pressPos.find(event->button);
+	if(it != privateData->pressPos.end())
+		privateData->pressPos.erase(it);
 	return true;
 }
 
 gboolean iridescent_map_motion_notify_event (GtkWidget *widget,
 					 GdkEventMotion *event)
 {
-	cout << "Motion" << endl;
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+
+	std::map<int, IntPair>::iterator it = privateData->pressPos.find(1);
+	if(it != privateData->pressPos.end())
+	{
+		IntPair &startPos = it->second;
+		double dx = event->x - startPos.first;
+		double dy = event->y - startPos.second;
+		privateData->currentX = privateData->preMoveX + dx / 640.0;
+		privateData->currentY = privateData->preMoveY + dy / 640.0;
+	}
 	return true;
 }
 
