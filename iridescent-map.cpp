@@ -1,6 +1,7 @@
 #include <gtk/gtk.h>
 #include "iridescent-map.h"
 #include <iostream>
+#include <cmath>
 
 #include "iridescent-map/LabelEngine.h"
 #include "iridescent-map/Regrouper.h"
@@ -172,10 +173,10 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			cairo_surface_t **surface = &(it2->second);
 			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
 			
-			int dx = x - 2035;
-			int dy = y - 1374;
-			double px = dx * 640.0;
-			double py = dy * 640.0;
+			double dx = x - privateData->currentX;
+			double dy = y - privateData->currentY;
+			double px = round(dx * 640.0);
+			double py = round(dy * 640.0);
 
 			cairo_matrix_t mat;
 			cairo_matrix_init_translate (&mat, -px, -py);
@@ -209,10 +210,10 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			cairo_surface_t **surface = &(it2->second);
 			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
 			
-			int dx = x - 2035;
-			int dy = y - 1374;
-			double px = dx * 640.0;
-			double py = dy * 640.0;
+			double dx = x - privateData->currentX;
+			double dy = y - privateData->currentY;
+			double px = round(dx * 640.0);
+			double py = round(dy * 640.0);
 
 			cairo_matrix_t mat;
 			cairo_matrix_init_translate (&mat, -px, -py);
@@ -281,8 +282,9 @@ gboolean iridescent_map_motion_notify_event (GtkWidget *widget,
 		IntPair &startPos = it->second;
 		double dx = event->x - startPos.first;
 		double dy = event->y - startPos.second;
-		privateData->currentX = privateData->preMoveX + dx / 640.0;
-		privateData->currentY = privateData->preMoveY + dy / 640.0;
+		privateData->currentX = privateData->preMoveX - dx / 640.0;
+		privateData->currentY = privateData->preMoveY - dy / 640.0;
+		gtk_widget_queue_draw (widget);
 	}
 	return true;
 }
