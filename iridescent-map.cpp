@@ -112,7 +112,9 @@ static void iridescent_map_init( IridescentMap* self )
     widget = GTK_WIDGET(self);
 
     gtk_widget_override_background_color( widget, GTK_STATE_FLAG_NORMAL, &c );
-
+	gtk_widget_add_events(widget, GDK_BUTTON_PRESS_MASK);
+	gtk_widget_add_events(widget, GDK_BUTTON_RELEASE_MASK);
+	gtk_widget_add_events(widget, GDK_BUTTON_MOTION_MASK);
 }
 
 void iridescent_map_destroy(GtkWidget *widget)
@@ -231,6 +233,27 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 	return true; //stop other handlers from being invoked for the event
 }
 
+gboolean iridescent_map_button_press_event (GtkWidget *widget,
+				 GdkEventButton *event)
+{
+	cout << "Press" << endl;
+	return true;
+}
+
+gboolean iridescent_map_button_release_event (GtkWidget *widget,
+				 GdkEventButton *event)
+{
+	cout << "Release" << endl;
+	return true;
+}
+
+gboolean iridescent_map_motion_notify_event (GtkWidget *widget,
+					 GdkEventMotion *event)
+{
+	cout << "Motion" << endl;
+	return true;
+}
+
 static void iridescent_map_class_init( IridescentMapClass* klass )
 {
 	GtkWidgetClass *widget_class = (GtkWidgetClass*) klass;
@@ -238,5 +261,8 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->get_preferred_width = iridescent_map_get_preferred_width;
 	widget_class->draw = iridescent_map_draw;
 	widget_class->destroy = iridescent_map_destroy;
+	widget_class->button_press_event = iridescent_map_button_press_event;
+	widget_class->button_release_event = iridescent_map_button_release_event;
+	widget_class->motion_notify_event = iridescent_map_motion_notify_event;
 }
 
