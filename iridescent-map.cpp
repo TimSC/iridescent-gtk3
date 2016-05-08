@@ -2,6 +2,7 @@
 #include "iridescent-map.h"
 #include <iostream>
 #include <cmath>
+#include <fstream>
 
 #include "iridescent-map/LabelEngine.h"
 #include "iridescent-map/Regrouper.h"
@@ -9,6 +10,7 @@
 #include "iridescent-map/Transform.h"
 #include "iridescent-map/drawlib/drawlibcairo.h"
 #include "iridescent-map/MapRender.h"
+#include "iridescent-map/Coast.h"
 
 using namespace std;
 
@@ -35,6 +37,8 @@ public:
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
 
+		CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
+
 		for(int x=2034; x <= 2036; x++)
 		{
 			for(int y=1373; y<= 1375; y++)
@@ -49,7 +53,8 @@ public:
 				class SlippyTilesTransform slippyTilesTransform(12, x, y);
 
 				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib);
+				class MapRender mapRender(&drawlib, x, y, 12);
+				mapRender.SetCoastMap(coastMap);
 				LabelsByImportance organisedLabels;
 	
 				mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
@@ -82,7 +87,8 @@ public:
 
 				cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib);
+				class MapRender mapRender(&drawlib, x, y, 12);
+				mapRender.SetCoastMap(coastMap);
 				mapRender.RenderLabels(labelList, labelOffsets);
 
 				organisedLabelMap[x][y] = surface;
