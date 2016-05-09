@@ -44,6 +44,7 @@ Resource::Resource(const class Resource &a)
 
 Resource::~Resource()
 {
+	labelsByImportance.clear();
 	if(labelsSurface != NULL)
 		cairo_surface_destroy(labelsSurface);
 	labelsSurface = NULL;
@@ -51,25 +52,73 @@ Resource::~Resource()
 		cairo_surface_destroy(shapesSurface);
 	shapesSurface = NULL;
 }
+// ************************************************************
 
+class WorkerThreadTask
+{
+public:
+	int type;
+	int x, y, zoom;
+	bool complete, assigned;
+
+	WorkerThreadTask();
+	WorkerThreadTask(const class WorkerThreadTask &a);
+	WorkerThreadTask& operator=(const WorkerThreadTask &arg);
+	virtual ~WorkerThreadTask();
+};
+
+WorkerThreadTask::WorkerThreadTask()
+{
+	type = 0;
+	x = 0;	
+	y = 0; 
+	zoom = 0;
+	complete = false;
+	assigned = false;
+}
+
+WorkerThreadTask::WorkerThreadTask(const class WorkerThreadTask &a)
+{
+	*this = a;
+}
+
+WorkerThreadTask& WorkerThreadTask::operator=(const WorkerThreadTask &arg)
+{
+	type = arg.type;
+	x = arg.x;	
+	y = arg.y; 
+	zoom = arg.zoom;
+	complete = arg.complete;
+	assigned = arg.assigned;
+	return *this;
+}
+
+WorkerThreadTask::~WorkerThreadTask()
+{
+
+}
+
+// ************************************************************
 typedef map<int, map<int, Resource> > Resources;
 gpointer WorkerThread (gpointer data);
 
 class _IridescentMapPrivate
 {
 public:
+	//Local variables (not thread safe!)
 	std::map<int, IntPair> pressPos;
 	double currentX, currentY;
 	double preMoveX, preMoveY;
 	GtkWidget *parent;
 
-	//Start of thread protected resources and controls
+	//Start of memory protected resources and controls
 	GThread *workerThread;
 	GMutex *mutex;
 	GCond *stopWorkerCond;
 	bool stopWorker;
+	std::list<class WorkerThreadTask> taskList;
 	Resources resources;
-	//End of protected resources
+	//End of memory protected resources
 
 	_IridescentMapPrivate(GtkWidget *parent)
 	{
@@ -291,7 +340,6 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 
 static gboolean ResourcesChanged (gpointer data)
 {
-	cout << "Resources changed" << endl;
 	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
 
 	if(priv != NULL && priv->parent != NULL)
@@ -308,49 +356,90 @@ gpointer WorkerThread (gpointer data)
 
 	CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
 	
+	g_mutex_lock (priv->mutex);
+	std::list<class WorkerThreadTask> &taskList = priv->taskList;
 	for(int x=2034; x <= 2036; x++)
 	{
 		for(int y=1373; y<= 1375; y++)
 		{
-			// ** Render without labels and collect label info **
-
-			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
-			FeatureStore featureStore;
-			ReadInput(12, x, y, featureStore);
-
-			class SlippyTilesTransform slippyTilesTransform(12, x, y);
-
-			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, x, y, 12);
-			mapRender.SetCoastMap(coastMap);
-			LabelsByImportance organisedLabels;
-
-			mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
-
-			g_mutex_lock (priv->mutex);
-			class Resource rTmp;
-			priv->resources[x][y] = rTmp;
-			Resource &r = priv->resources[x][y];
-			r.labelsByImportance = organisedLabels;
-			r.shapesSurface = surface;
-			g_mutex_unlock (priv->mutex);
-
-			gdk_threads_add_idle (ResourcesChanged, data);
+			WorkerThreadTask task;
+			task.x = x;
+			task.y = y;
+			task.zoom = 12;
+			task.type = 1;
+			taskList.push_back(task);
 		}
 	}
-
-	// ** Render labels **
 
 	for(int x=2035; x <= 2035; x++)
 	{
 		for(int y=1374; y<= 1374; y++)
 		{
+			WorkerThreadTask task;
+			task.x = x;
+			task.y = y;
+			task.zoom = 12;
+			task.type = 2;
+			taskList.push_back(task);
+		}
+	}
+
+	g_mutex_unlock (priv->mutex);
+
+	while (!stop)
+	{
+		//Check for unassigned tasks
+		g_mutex_lock (priv->mutex);
+		class WorkerThreadTask taskCpy; //Local copy of task
+		bool taskReady = false;
+		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
+		{
+			if (it->complete || it->assigned) continue;
+			it->assigned = true;
+			taskCpy = *it;
+			taskReady = true;
+			break;
+		}
+		g_mutex_unlock (priv->mutex);
+
+		//Perform task if one is available
+		if(taskReady && taskCpy.type == 1 && !taskCpy.complete)
+		{
+			// ** Draw shape layer **
+			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
+			FeatureStore featureStore;
+			ReadInput(taskCpy.zoom, taskCpy.x, taskCpy.y, featureStore);
+
+			class SlippyTilesTransform slippyTilesTransform(taskCpy.zoom, taskCpy.x, taskCpy.y);
+
+			class DrawLibCairoPango drawlib(surface);	
+			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
+			mapRender.SetCoastMap(coastMap);
+			LabelsByImportance organisedLabels;
+
+			mapRender.Render(taskCpy.zoom, featureStore, true, true, slippyTilesTransform, organisedLabels);
+
+			g_mutex_lock (priv->mutex);
+			class Resource rTmp;
+			priv->resources[taskCpy.x][taskCpy.y] = rTmp;
+			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+			r.labelsByImportance = organisedLabels;
+			r.shapesSurface = surface;
+			g_mutex_unlock (priv->mutex);
+
+			gdk_threads_add_idle (ResourcesChanged, data);		
+		}
+
+		if(taskReady && taskCpy.type == 2 && !taskCpy.complete)
+		{
+			// ** Draw labels layer **
+
 			RenderLabelList labelList;
 			RenderLabelListOffsets labelOffsets;
 
-			for(int y2=1373; y2<= 1375; y2++)
+			for(int y2=taskCpy.y-1; y2<= taskCpy.y+1; y2++)
 			{
-				for(int x2=2034; x2 <= 2036; x2++)
+				for(int x2=taskCpy.x-1; x2 <= taskCpy.x+1; x2++)
 				{
 					g_mutex_lock (priv->mutex);
 					map<int, Resource> &col = priv->resources[x2];
@@ -362,21 +451,20 @@ gpointer WorkerThread (gpointer data)
 
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, x, y, 12);
+			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
 			mapRender.SetCoastMap(coastMap);
 			mapRender.RenderLabels(labelList, labelOffsets);
 
 			g_mutex_lock (priv->mutex);
-			Resource &r = priv->resources[x][y];
+			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
 			r.labelsSurface = surface;
 			g_mutex_unlock (priv->mutex);
 
 			gdk_threads_add_idle (ResourcesChanged, data);
-		}
-	}
 
-	while (!stop)
-	{
+		}
+
+		//Wait for a while, unless signalled by a condition
 		gint64 end_time;
 		end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
 
