@@ -61,6 +61,7 @@ public:
 	std::map<int, IntPair> pressPos;
 	double currentX, currentY;
 	double preMoveX, preMoveY;
+	GtkWidget *parent;
 
 	//Start of thread protected resources and controls
 	GThread *workerThread;
@@ -70,8 +71,9 @@ public:
 	Resources resources;
 	//End of protected resources
 
-	_IridescentMapPrivate()
+	_IridescentMapPrivate(GtkWidget *parent)
 	{
+		this->parent = parent;
 		this->currentX = 2035.0;
 		this->currentY = 1374.0;
 		this->preMoveX = 0.0;
@@ -84,7 +86,6 @@ public:
 		this->workerThread = g_thread_new("IridescentMapWorker",
               WorkerThread,
               this);
-
 	}
 
 	virtual ~_IridescentMapPrivate()
@@ -114,13 +115,11 @@ public:
 static void iridescent_map_init( IridescentMap* self )
 {
     GdkRGBA c;
-    GtkWidget *widget;
+    GtkWidget *widget = GTK_WIDGET(self);
 	
-	self->privateData = (gpointer)new class _IridescentMapPrivate();
+	self->privateData = (gpointer)new class _IridescentMapPrivate(GTK_WIDGET(widget));
 
     gdk_rgba_parse(&c, "blue");
-    widget = GTK_WIDGET(self);
-
     gtk_widget_override_background_color( widget, GTK_STATE_FLAG_NORMAL, &c );
 	gtk_widget_add_events(widget, GDK_BUTTON_PRESS_MASK);
 	gtk_widget_add_events(widget, GDK_BUTTON_RELEASE_MASK);
@@ -290,6 +289,16 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->motion_notify_event = iridescent_map_motion_notify_event;
 }
 
+static gboolean ResourcesChanged (gpointer data)
+{
+	cout << "Resources changed" << endl;
+	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
+
+	if(priv != NULL && priv->parent != NULL)
+		gtk_widget_queue_draw (priv->parent);
+	return G_SOURCE_REMOVE;
+}
+
 gpointer WorkerThread (gpointer data)
 {
 	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
@@ -325,6 +334,8 @@ gpointer WorkerThread (gpointer data)
 			r.labelsByImportance = organisedLabels;
 			r.shapesSurface = surface;
 			g_mutex_unlock (priv->mutex);
+
+			gdk_threads_add_idle (ResourcesChanged, data);
 		}
 	}
 
@@ -334,9 +345,6 @@ gpointer WorkerThread (gpointer data)
 	{
 		for(int y=1374; y<= 1374; y++)
 		{
-
-			
-
 			RenderLabelList labelList;
 			RenderLabelListOffsets labelOffsets;
 
@@ -362,9 +370,10 @@ gpointer WorkerThread (gpointer data)
 			Resource &r = priv->resources[x][y];
 			r.labelsSurface = surface;
 			g_mutex_unlock (priv->mutex);
+
+			gdk_threads_add_idle (ResourcesChanged, data);
 		}
 	}
-
 
 	while (!stop)
 	{
