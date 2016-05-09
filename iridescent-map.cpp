@@ -54,6 +54,12 @@ Resource::~Resource()
 
 typedef map<int, map<int, Resource> > Resources;
 
+gpointer WorkerThread (gpointer data)
+{
+	cout << "Worker!" << endl;
+	return 0;
+}
+
 class _IridescentMapPrivate
 {
 public:
@@ -61,6 +67,7 @@ public:
 	std::map<int, IntPair> pressPos;
 	double currentX, currentY;
 	double preMoveX, preMoveY;
+	GThread *workerThread;
 
 	_IridescentMapPrivate()
 	{
@@ -68,6 +75,9 @@ public:
 		this->currentY = 1374.0;
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
+		this->workerThread = g_thread_new("IridescentMapWorker",
+              WorkerThread,
+              this);
 
 		CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
 
@@ -136,6 +146,7 @@ public:
 	virtual ~_IridescentMapPrivate()
 	{
 		resources.clear();
+		g_thread_join (workerThread);
 	}
 };
 
