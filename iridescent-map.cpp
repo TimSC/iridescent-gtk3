@@ -53,12 +53,7 @@ Resource::~Resource()
 }
 
 typedef map<int, map<int, Resource> > Resources;
-
-gpointer WorkerThread (gpointer data)
-{
-	cout << "Worker!" << endl;
-	return 0;
-}
+gpointer WorkerThread (gpointer data);
 
 class _IridescentMapPrivate
 {
@@ -68,6 +63,9 @@ public:
 	double currentX, currentY;
 	double preMoveX, preMoveY;
 	GThread *workerThread;
+	GMutex *mutex;
+	GCond *stopWorkerCond;
+	bool stopWorker;
 
 	_IridescentMapPrivate()
 	{
@@ -75,6 +73,11 @@ public:
 		this->currentY = 1374.0;
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
+		this->stopWorker = false;
+		this->mutex = new GMutex;
+		g_mutex_init(this->mutex);
+		this->stopWorkerCond = new GCond;
+		g_cond_init (this->stopWorkerCond);
 		this->workerThread = g_thread_new("IridescentMapWorker",
               WorkerThread,
               this);
@@ -145,8 +148,23 @@ public:
 
 	virtual ~_IridescentMapPrivate()
 	{
+		g_mutex_lock (this->mutex);
+		this->stopWorker = true;
+		g_mutex_unlock (this->mutex);
+		g_cond_signal (this->stopWorkerCond);
+
 		resources.clear();
+		
 		g_thread_join (workerThread);
+		g_thread_unref(workerThread);
+		workerThread = NULL;
+
+		g_cond_clear (this->stopWorkerCond);
+		delete this->stopWorkerCond;
+		this->stopWorkerCond = NULL;
+		g_mutex_clear (this->mutex);
+		delete this->mutex;
+		this->mutex = NULL;
 	}
 };
 
@@ -325,5 +343,29 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->button_press_event = iridescent_map_button_press_event;
 	widget_class->button_release_event = iridescent_map_button_release_event;
 	widget_class->motion_notify_event = iridescent_map_motion_notify_event;
+}
+
+gpointer WorkerThread (gpointer data)
+{
+	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
+	cout << "Splat" << endl;
+	g_mutex_lock (priv->mutex);
+	bool stop = priv->stopWorker;
+	g_mutex_unlock (priv->mutex);
+	while (!stop)
+	{
+		cout << "Worker!" << endl;
+		gint64 end_time;
+		end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
+
+		g_mutex_lock (priv->mutex);
+		g_cond_wait_until (priv->stopWorkerCond,
+                   priv->mutex,
+                   end_time);
+		stop = priv->stopWorker;
+		g_mutex_unlock (priv->mutex);
+	}
+
+	return 0;
 }
 
