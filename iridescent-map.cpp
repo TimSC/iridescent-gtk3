@@ -14,18 +14,50 @@
 
 using namespace std;
 
-typedef map<int, map<int, LabelsByImportance> > OrganisedLabelsMap;
-typedef map<int, map<int, cairo_surface_t *> > OrganisedSurfaceMap;
 typedef std::pair<int, int> IntPair;
 
 G_DEFINE_TYPE( IridescentMap, iridescent_map, GTK_TYPE_DRAWING_AREA )
 
+class Resource
+{
+public:
+	LabelsByImportance labelsByImportance;
+	cairo_surface_t *labelsSurface, *shapesSurface;
+
+	Resource();
+	Resource(const class Resource &a);
+	virtual ~Resource();
+};
+
+Resource::Resource()
+{
+	labelsSurface = NULL;
+	shapesSurface = NULL;
+}
+
+Resource::Resource(const class Resource &a)
+{
+	labelsSurface = a.labelsSurface;
+	shapesSurface = a.shapesSurface;
+	labelsByImportance = a.labelsByImportance;
+}
+
+Resource::~Resource()
+{
+	if(labelsSurface != NULL)
+		cairo_surface_destroy(labelsSurface);
+	labelsSurface = NULL;
+	if(shapesSurface != NULL)
+		cairo_surface_destroy(shapesSurface);
+	shapesSurface = NULL;
+}
+
+typedef map<int, map<int, Resource> > Resources;
+
 class _IridescentMapPrivate
 {
 public:
-	OrganisedLabelsMap labelInfoMap;
-	OrganisedSurfaceMap organisedShapeMap;
-	OrganisedSurfaceMap organisedLabelMap;
+	Resources resources;
 	std::map<int, IntPair> pressPos;
 	double currentX, currentY;
 	double preMoveX, preMoveY;
@@ -58,9 +90,11 @@ public:
 				LabelsByImportance organisedLabels;
 	
 				mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
-				labelInfoMap[x][y] = organisedLabels;
-
-				organisedShapeMap[x][y] = surface;
+				class Resource rTmp;
+				resources[x][y] = rTmp;
+				Resource &r = resources[x][y];
+				r.labelsByImportance = organisedLabels;
+				r.shapesSurface = surface;
 
 			}
 		}
@@ -79,8 +113,8 @@ public:
 				{
 					for(int x2=2034; x2 <= 2036; x2++)
 					{
-						map<int, LabelsByImportance> &col = labelInfoMap[x2];
-						labelList.push_back(col[y2]);
+						map<int, Resource> &col = resources[x2];
+						labelList.push_back(col[y2].labelsByImportance);
 						labelOffsets.push_back(std::pair<double, double>(640.0*(x2-2035), 640.0*(y2-1374)));
 					}
 				}
@@ -91,7 +125,8 @@ public:
 				mapRender.SetCoastMap(coastMap);
 				mapRender.RenderLabels(labelList, labelOffsets);
 
-				organisedLabelMap[x][y] = surface;
+				Resource &r = resources[x][y];
+				r.labelsSurface = surface;
 			}
 		}
 
@@ -100,18 +135,7 @@ public:
 
 	virtual ~_IridescentMapPrivate()
 	{
-		for(OrganisedSurfaceMap::iterator it = organisedShapeMap.begin();
-			it != organisedShapeMap.end(); it++)
-		{
-			for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
-				it2 != it->second.end(); it2++)
-			{
-				cairo_surface_t **surface = &(it2->second);
-				if(*surface != NULL)
-					cairo_surface_destroy(*surface);
-				*surface = NULL;
-			}
-		}
+		resources.clear();
 	}
 };
 
@@ -168,16 +192,20 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 	cairo_save(cr);
 	
-	for(OrganisedSurfaceMap::iterator it = privateData->organisedShapeMap.begin();
-		it != privateData->organisedShapeMap.end(); it++)
+	for(Resources::iterator it = privateData->resources.begin();
+		it != privateData->resources.end(); it++)
 	{
 		int x = it->first;
-		for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
+		for(map<int, Resource>::iterator it2 = it->second.begin();
 			it2 != it->second.end(); it2++)
 		{
 			int y = it2->first;
-			cairo_surface_t **surface = &(it2->second);
-			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
+			class Resource &r = it2->second;
+			cairo_surface_t *shapesSurface = r.shapesSurface;
+			cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
+
+			cairo_surface_t *labelsSurface = r.labelsSurface;
+			cairo_pattern_t *labelsPattern = cairo_pattern_create_for_surface (labelsSurface);
 			
 			double dx = x - privateData->currentX;
 			double dy = y - privateData->currentY;
@@ -186,58 +214,39 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 			cairo_matrix_t mat;
 			cairo_matrix_init_translate (&mat, -px, -py);
-			cairo_pattern_set_matrix(pattern, &mat);
 
-			cairo_set_source (cr,
-                      pattern);
-			cairo_pattern_destroy (pattern);
+			if(cairo_pattern_status(shapesPattern)==CAIRO_STATUS_SUCCESS)
+			{
+				cairo_pattern_set_matrix(shapesPattern, &mat);
+				cairo_set_source (cr, shapesPattern);
 
-			cairo_move_to(cr, px, 
-						py);
-			cairo_line_to(cr, px + 640, 
-						py);
-			cairo_line_to(cr, px + 640, 
-						py + 640);
-			cairo_line_to(cr, px + 0, 
-						py + 640);
-			cairo_fill (cr);
+				cairo_move_to(cr, px, 
+							py);
+				cairo_line_to(cr, px + 640, 
+							py);
+				cairo_line_to(cr, px + 640, 
+							py + 640);
+				cairo_line_to(cr, px + 0, 
+							py + 640);
+				cairo_fill (cr);
+			}
+			cairo_pattern_destroy (shapesPattern);
 
-		}
-	}
-
-	for(OrganisedSurfaceMap::iterator it = privateData->organisedLabelMap.begin();
-		it != privateData->organisedLabelMap.end(); it++)
-	{
-		int x = it->first;
-		for(map<int, cairo_surface_t *>::iterator it2 = it->second.begin();
-			it2 != it->second.end(); it2++)
-		{
-			int y = it2->first;
-			cairo_surface_t **surface = &(it2->second);
-			cairo_pattern_t *pattern = cairo_pattern_create_for_surface (*surface);
-			
-			double dx = x - privateData->currentX;
-			double dy = y - privateData->currentY;
-			double px = round(dx * 640.0);
-			double py = round(dy * 640.0);
-
-			cairo_matrix_t mat;
-			cairo_matrix_init_translate (&mat, -px, -py);
-			cairo_pattern_set_matrix(pattern, &mat);
-
-			cairo_set_source (cr,
-                      pattern);
-			cairo_pattern_destroy (pattern);
-
-			cairo_move_to(cr, px, 
-						py);
-			cairo_line_to(cr, px + 640, 
-						py);
-			cairo_line_to(cr, px + 640, 
-						py + 640);
-			cairo_line_to(cr, px + 0, 
-						py + 640);
-			cairo_fill (cr);
+			if(cairo_pattern_status(labelsPattern)==CAIRO_STATUS_SUCCESS)
+			{
+				cairo_pattern_set_matrix(labelsPattern, &mat);
+				cairo_set_source (cr, labelsPattern);
+				cairo_move_to(cr, px, 
+							py);
+				cairo_line_to(cr, px + 640, 
+							py);
+				cairo_line_to(cr, px + 640, 
+							py + 640);
+				cairo_line_to(cr, px + 0, 
+							py + 640);
+				cairo_fill (cr);
+			}
+			cairo_pattern_destroy (labelsPattern);
 
 		}
 	}
