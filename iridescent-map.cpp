@@ -58,14 +58,17 @@ gpointer WorkerThread (gpointer data);
 class _IridescentMapPrivate
 {
 public:
-	Resources resources;
 	std::map<int, IntPair> pressPos;
 	double currentX, currentY;
 	double preMoveX, preMoveY;
+
+	//Start of thread protected resources and controls
 	GThread *workerThread;
 	GMutex *mutex;
 	GCond *stopWorkerCond;
 	bool stopWorker;
+	Resources resources;
+	//End of protected resources
 
 	_IridescentMapPrivate()
 	{
@@ -82,68 +85,6 @@ public:
               WorkerThread,
               this);
 
-		CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
-
-		for(int x=2034; x <= 2036; x++)
-		{
-			for(int y=1373; y<= 1375; y++)
-			{
-
-				// ** Render without labels and collect label info **
-
-				cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
-				FeatureStore featureStore;
-				ReadInput(12, x, y, featureStore);
-
-				class SlippyTilesTransform slippyTilesTransform(12, x, y);
-
-				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib, x, y, 12);
-				mapRender.SetCoastMap(coastMap);
-				LabelsByImportance organisedLabels;
-	
-				mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
-				class Resource rTmp;
-				resources[x][y] = rTmp;
-				Resource &r = resources[x][y];
-				r.labelsByImportance = organisedLabels;
-				r.shapesSurface = surface;
-
-			}
-		}
-
-		// ** Render labels **
-
-		for(int x=2035; x <= 2035; x++)
-		{
-			for(int y=1374; y<= 1374; y++)
-			{
-
-				RenderLabelList labelList;
-				RenderLabelListOffsets labelOffsets;
-
-				for(int y2=1373; y2<= 1375; y2++)
-				{
-					for(int x2=2034; x2 <= 2036; x2++)
-					{
-						map<int, Resource> &col = resources[x2];
-						labelList.push_back(col[y2].labelsByImportance);
-						labelOffsets.push_back(std::pair<double, double>(640.0*(x2-2035), 640.0*(y2-1374)));
-					}
-				}
-
-				cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
-				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib, x, y, 12);
-				mapRender.SetCoastMap(coastMap);
-				mapRender.RenderLabels(labelList, labelOffsets);
-
-				Resource &r = resources[x][y];
-				r.labelsSurface = surface;
-			}
-		}
-
-
 	}
 
 	virtual ~_IridescentMapPrivate()
@@ -152,12 +93,14 @@ public:
 		this->stopWorker = true;
 		g_mutex_unlock (this->mutex);
 		g_cond_signal (this->stopWorkerCond);
-
-		resources.clear();
 		
 		g_thread_join (workerThread);
 		g_thread_unref(workerThread);
 		workerThread = NULL;
+
+		g_mutex_lock (this->mutex);
+		resources.clear();
+		g_mutex_unlock (this->mutex);
 
 		g_cond_clear (this->stopWorkerCond);
 		delete this->stopWorkerCond;
@@ -221,6 +164,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 	cairo_save(cr);
 	
+	g_mutex_lock (privateData->mutex);
 	for(Resources::iterator it = privateData->resources.begin();
 		it != privateData->resources.end(); it++)
 	{
@@ -279,6 +223,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 		}
 	}
+	g_mutex_unlock (privateData->mutex);
 
 	cairo_restore(cr);
 
@@ -348,13 +293,81 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 gpointer WorkerThread (gpointer data)
 {
 	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
-	cout << "Splat" << endl;
 	g_mutex_lock (priv->mutex);
 	bool stop = priv->stopWorker;
 	g_mutex_unlock (priv->mutex);
+
+	CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
+	
+	for(int x=2034; x <= 2036; x++)
+	{
+		for(int y=1373; y<= 1375; y++)
+		{
+			// ** Render without labels and collect label info **
+
+			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
+			FeatureStore featureStore;
+			ReadInput(12, x, y, featureStore);
+
+			class SlippyTilesTransform slippyTilesTransform(12, x, y);
+
+			class DrawLibCairoPango drawlib(surface);	
+			class MapRender mapRender(&drawlib, x, y, 12);
+			mapRender.SetCoastMap(coastMap);
+			LabelsByImportance organisedLabels;
+
+			mapRender.Render(12, featureStore, true, true, slippyTilesTransform, organisedLabels);
+
+			g_mutex_lock (priv->mutex);
+			class Resource rTmp;
+			priv->resources[x][y] = rTmp;
+			Resource &r = priv->resources[x][y];
+			r.labelsByImportance = organisedLabels;
+			r.shapesSurface = surface;
+			g_mutex_unlock (priv->mutex);
+		}
+	}
+
+	// ** Render labels **
+
+	for(int x=2035; x <= 2035; x++)
+	{
+		for(int y=1374; y<= 1374; y++)
+		{
+
+			
+
+			RenderLabelList labelList;
+			RenderLabelListOffsets labelOffsets;
+
+			for(int y2=1373; y2<= 1375; y2++)
+			{
+				for(int x2=2034; x2 <= 2036; x2++)
+				{
+					g_mutex_lock (priv->mutex);
+					map<int, Resource> &col = priv->resources[x2];
+					labelList.push_back(col[y2].labelsByImportance);
+					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-2035), 640.0*(y2-1374)));
+					g_mutex_unlock (priv->mutex);
+				}
+			}
+
+			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
+			class DrawLibCairoPango drawlib(surface);	
+			class MapRender mapRender(&drawlib, x, y, 12);
+			mapRender.SetCoastMap(coastMap);
+			mapRender.RenderLabels(labelList, labelOffsets);
+
+			g_mutex_lock (priv->mutex);
+			Resource &r = priv->resources[x][y];
+			r.labelsSurface = surface;
+			g_mutex_unlock (priv->mutex);
+		}
+	}
+
+
 	while (!stop)
 	{
-		cout << "Worker!" << endl;
 		gint64 end_time;
 		end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
 
