@@ -198,6 +198,7 @@ static void iridescent_map_init( IridescentMap* self )
 	gtk_widget_add_events(widget, GDK_BUTTON_PRESS_MASK);
 	gtk_widget_add_events(widget, GDK_BUTTON_RELEASE_MASK);
 	gtk_widget_add_events(widget, GDK_BUTTON_MOTION_MASK);
+	gtk_widget_add_events(widget, GDK_SCROLL_MASK);
 }
 
 void iridescent_map_destroy(GtkWidget *widget)
@@ -352,6 +353,13 @@ void iridescent_map_realize(GtkWidget *widget)
 	iridescent_map_view_changed(widget);
 }
 
+gboolean iridescent_map_scroll_event (GtkWidget *widget,
+	GdkEventScroll *event)
+{
+	cout << "iridescent_map_scroll_event" << endl;
+}
+
+
 static void iridescent_map_class_init( IridescentMapClass* klass )
 {
 	GtkWidgetClass *widget_class = (GtkWidgetClass*) klass;
@@ -363,6 +371,7 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->button_press_event = iridescent_map_button_press_event;
 	widget_class->button_release_event = iridescent_map_button_release_event;
 	widget_class->motion_notify_event = iridescent_map_motion_notify_event;
+	widget_class->scroll_event = iridescent_map_scroll_event;
 }
 
 static gboolean iridescent_map_resources_changed (gpointer data)
