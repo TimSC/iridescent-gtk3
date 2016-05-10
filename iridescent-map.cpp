@@ -387,7 +387,8 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 	int maxy = (int)ceil(privateData->currentY + halfHeightNumTiles);
 
 	g_mutex_lock (privateData->mutex);
-	
+	std::list<class WorkerThreadTask> &taskList = privateData->taskList;	
+
 	//Tiles currently in view
 	for(int x = minx; x < maxx; x++)
 	{
@@ -407,7 +408,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				task.zoom = 12;
 				task.type = WorkerThreadTask::TASK_SHAPES;
 				task.priority = 1;
-				privateData->taskList.push_back(task);
+				taskList.push_back(task);
 			}
 
 			if(!r.labelsSurfacePending && r.labelsSurface == NULL)
@@ -420,13 +421,42 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				task.zoom = 12;
 				task.type = WorkerThreadTask::TASK_LABELS;
 				task.priority = 2;
-				privateData->taskList.push_back(task);
+				taskList.push_back(task);
 			}
 		}
 	}
 
 	//Check label tasks have appropriate prerequisite data to complete properly
-	
+	for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
+	{
+		class WorkerThreadTask &task = *it;
+		if(task.type != WorkerThreadTask::TASK_LABELS) continue;
+		
+		for(int x = task.x - 1; x <= task.x + 1; x++)
+		{
+			for(int y = task.y - 1; y <= task.y + 1; y++)
+			{
+				//Label tasks must have the surrounding tiles ready
+				map<int, Resource> &col = privateData->resources[x];
+				Resource &r = col[y];
+				if(!r.shapesSurfacePending && r.shapesSurface == NULL)
+				{
+					r.shapesSurfacePending = true;
+				
+					WorkerThreadTask ntask;
+					ntask.x = x;
+					ntask.y = y;
+					ntask.zoom = 12;
+					ntask.type = WorkerThreadTask::TASK_SHAPES;
+					ntask.priority = 1;
+					taskList.push_back(ntask);
+				}
+			}
+		}
+	}
+
+	//Limit the number of tiles in memory
+	//TODO
 
 	g_mutex_unlock (privateData->mutex);
 
@@ -535,7 +565,7 @@ gpointer WorkerThread (gpointer data)
 					g_mutex_lock (priv->mutex);
 					map<int, Resource> &col = priv->resources[x2];
 					labelList.push_back(col[y2].labelsByImportance);
-					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-2035), 640.0*(y2-1374)));
+					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-taskCpy.x), 640.0*(y2-taskCpy.y)));
 					g_mutex_unlock (priv->mutex);
 				}
 			}
@@ -555,6 +585,9 @@ gpointer WorkerThread (gpointer data)
 			gdk_threads_add_idle (iridescent_map_resources_changed, data);
 
 		}
+
+		//Remove completed tasks
+		//TODO
 
 		//Wait for a while, unless signalled by a condition
 		gint64 end_time;
