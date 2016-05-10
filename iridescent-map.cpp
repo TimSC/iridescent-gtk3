@@ -101,6 +101,7 @@ WorkerThreadTask::~WorkerThreadTask()
 // ************************************************************
 typedef map<int, map<int, Resource> > Resources;
 gpointer WorkerThread (gpointer data);
+static void iridescent_map_view_changed (GtkWidget *widget);
 
 class _IridescentMapPrivate
 {
@@ -321,9 +322,17 @@ gboolean iridescent_map_motion_notify_event (GtkWidget *widget,
 		double dy = event->y - startPos.second;
 		privateData->currentX = privateData->preMoveX - dx / 640.0;
 		privateData->currentY = privateData->preMoveY - dy / 640.0;
+		iridescent_map_view_changed(widget);
 		gtk_widget_queue_draw (widget);
 	}
 	return true;
+}
+
+void iridescent_map_realize(GtkWidget *widget)
+{
+	GTK_WIDGET_CLASS (iridescent_map_parent_class)->realize (widget);
+
+	iridescent_map_view_changed(widget);
 }
 
 static void iridescent_map_class_init( IridescentMapClass* klass )
@@ -331,6 +340,7 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	GtkWidgetClass *widget_class = (GtkWidgetClass*) klass;
 	widget_class->get_preferred_height = iridescent_map_get_preferred_height;
 	widget_class->get_preferred_width = iridescent_map_get_preferred_width;
+	widget_class->realize = iridescent_map_realize;
 	widget_class->draw = iridescent_map_draw;
 	widget_class->destroy = iridescent_map_destroy;
 	widget_class->button_press_event = iridescent_map_button_press_event;
@@ -338,13 +348,25 @@ static void iridescent_map_class_init( IridescentMapClass* klass )
 	widget_class->motion_notify_event = iridescent_map_motion_notify_event;
 }
 
-static gboolean ResourcesChanged (gpointer data)
+static gboolean iridescent_map_resources_changed (gpointer data)
 {
 	class _IridescentMapPrivate *priv = (class _IridescentMapPrivate *)data;
 
 	if(priv != NULL && priv->parent != NULL)
 		gtk_widget_queue_draw (priv->parent);
 	return G_SOURCE_REMOVE;
+}
+
+static void iridescent_map_view_changed (GtkWidget *widget)
+{
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+
+	GtkAllocation allocation;
+	gtk_widget_get_allocation (widget,
+                               &allocation);
+
+	cout << allocation.x <<","<< allocation.y <<","<< allocation.width <<","<< allocation.height <<","<< endl;
 }
 
 gpointer WorkerThread (gpointer data)
@@ -427,7 +449,7 @@ gpointer WorkerThread (gpointer data)
 			r.shapesSurface = surface;
 			g_mutex_unlock (priv->mutex);
 
-			gdk_threads_add_idle (ResourcesChanged, data);		
+			gdk_threads_add_idle (iridescent_map_resources_changed, data);		
 		}
 
 		if(taskReady && taskCpy.type == 2 && !taskCpy.complete)
@@ -460,7 +482,7 @@ gpointer WorkerThread (gpointer data)
 			r.labelsSurface = surface;
 			g_mutex_unlock (priv->mutex);
 
-			gdk_threads_add_idle (ResourcesChanged, data);
+			gdk_threads_add_idle (iridescent_map_resources_changed, data);
 
 		}
 
