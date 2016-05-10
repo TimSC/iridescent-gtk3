@@ -479,12 +479,14 @@ gpointer WorkerThread (gpointer data)
 		std::list<class WorkerThreadTask> &taskList = priv->taskList;
 		int highestPriority = 0;
 		bool highestPrioritySet = false;
+		unsigned int countUnassignedTasks = 0;
 
 		//Find highest priority unassigned task
 		std::list<class WorkerThreadTask>::iterator bestIt = taskList.end();
 		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
 		{
 			if (it->complete || it->assigned) continue;
+			countUnassignedTasks ++;
 			if(highestPrioritySet && it->priority >= highestPriority) continue; //Task not urgent compared to others
 
 			//Candidate task found
@@ -591,7 +593,10 @@ gpointer WorkerThread (gpointer data)
 
 		//Wait for a while, unless signalled by a condition
 		gint64 end_time;
-		end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
+		if(countUnassignedTasks == 0)
+			end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
+		else
+			end_time = g_get_monotonic_time () + 10 * G_TIME_SPAN_MILLISECOND;
 
 		g_mutex_lock (priv->mutex);
 		g_cond_wait_until (priv->stopWorkerCond,
