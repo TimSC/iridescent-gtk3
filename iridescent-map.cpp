@@ -121,7 +121,7 @@ WorkerThreadTask::~WorkerThreadTask()
 }
 
 // ************************************************************
-typedef map<int, map<int, Resource> > Resources;
+typedef map<int, map<int, map<int, Resource> > > Resources; //First index is zoom, then x, then y
 gpointer WorkerThread (gpointer data);
 static void iridescent_map_view_changed (GtkWidget *widget);
 
@@ -130,8 +130,8 @@ class _IridescentMapPrivate
 public:
 	//Local variables (not thread safe!)
 	std::map<int, IntPair> pressPos;
-	double currentX, currentY;
-	double preMoveX, preMoveY;
+	double currentX, currentY, currentZoom;
+	double preMoveX, preMoveY, preZoom;
 	GtkWidget *parent;
 	uint64_t nextTaskId;
 
@@ -149,8 +149,10 @@ public:
 		this->parent = parent;
 		this->currentX = 2035.0;
 		this->currentY = 1374.0;
+		this->currentZoom = 12.0;
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
+		this->preZoom = 0;
 		this->nextTaskId = 0;
 		this->stopWorker = false;
 		this->mutex = new GMutex;
@@ -239,8 +241,10 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 	cairo_save(cr);
 	
 	g_mutex_lock (privateData->mutex);
-	for(Resources::iterator it = privateData->resources.begin();
-		it != privateData->resources.end(); it++)
+	map<int, map<int, Resource> > &resourcesAtZoom = privateData->resources[(int)round(privateData->currentZoom)];
+	
+	for(map<int, map<int, Resource> >::iterator it = resourcesAtZoom.begin();
+		it != resourcesAtZoom.end(); it++)
 	{
 		int x = it->first;
 		for(map<int, Resource>::iterator it2 = it->second.begin();
@@ -309,6 +313,7 @@ gboolean iridescent_map_button_press_event (GtkWidget *widget,
 	{
 		privateData->preMoveX = privateData->currentX;
 		privateData->preMoveY = privateData->currentY;
+		privateData->preZoom = privateData->currentZoom;
 	}
 
 	return true;
@@ -357,6 +362,28 @@ gboolean iridescent_map_scroll_event (GtkWidget *widget,
 	GdkEventScroll *event)
 {
 	cout << "iridescent_map_scroll_event" << endl;
+	IridescentMap *self = IRIDESCENT_MAP(widget);
+	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+
+	GdkScrollDirection &direction = event->direction;
+	if(direction == GDK_SCROLL_UP)
+	{
+		privateData->currentZoom = round(privateData->currentZoom) + 1;
+		privateData->currentX *= 2;
+		privateData->currentY *= 2;
+	}
+	if(direction == GDK_SCROLL_DOWN)
+	{
+		if(privateData->currentZoom < 12.0)
+		{
+			privateData->currentZoom = round(privateData->currentZoom) - 1;
+			privateData->currentX /= 2;
+			privateData->currentY /= 2;
+		}
+	}
+
+	iridescent_map_view_changed(widget);
+	gtk_widget_queue_draw (widget);
 }
 
 
@@ -402,12 +429,13 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 
 	g_mutex_lock (privateData->mutex);
 	std::list<class WorkerThreadTask> &taskList = privateData->taskList;	
+	map<int, map<int, Resource> > &resourcesAtZoom = privateData->resources[(int)round(privateData->currentZoom)];
 
 	//Tiles currently in view
 	for(int x = minx; x < maxx; x++)
 	{
 		//Ensure column exists
-		map<int, Resource> &col = privateData->resources[x];
+		map<int, Resource> &col = resourcesAtZoom[x];
 
 		for(int y = miny; y < maxy; y++)
 		{
@@ -419,7 +447,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				WorkerThreadTask task;
 				task.x = x;
 				task.y = y;
-				task.zoom = 12;
+				task.zoom = (int)round(privateData->currentZoom);
 				task.type = WorkerThreadTask::TASK_SHAPES;
 				task.priority = 1;
 				task.id = privateData->nextTaskId;
@@ -434,7 +462,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				WorkerThreadTask task;
 				task.x = x;
 				task.y = y;
-				task.zoom = 12;
+				task.zoom = (int)round(privateData->currentZoom);
 				task.type = WorkerThreadTask::TASK_LABELS;
 				task.priority = 2;
 				task.id = privateData->nextTaskId;
@@ -455,7 +483,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 			for(int y = task.y - 1; y <= task.y + 1; y++)
 			{
 				//Label tasks must have the surrounding tiles ready
-				map<int, Resource> &col = privateData->resources[x];
+				map<int, Resource> &col = resourcesAtZoom[x];
 				Resource &r = col[y];
 				if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
 				{
@@ -464,7 +492,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 					WorkerThreadTask ntask;
 					ntask.x = x;
 					ntask.y = y;
-					ntask.zoom = 12;
+					ntask.zoom = (int)round(privateData->currentZoom);
 					ntask.type = WorkerThreadTask::TASK_SHAPES;
 					ntask.priority = 1;
 					task.id = privateData->nextTaskId;
@@ -553,8 +581,8 @@ gpointer WorkerThread (gpointer data)
 
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
-				priv->resources[taskCpy.x][taskCpy.y] = rTmp;
-				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+				priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y] = rTmp;
+				Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
 				r.labelsByImportance = organisedLabels;
 				r.shapesSurface = surface;
 				r.shapesSurfacePending = false;
@@ -567,8 +595,8 @@ gpointer WorkerThread (gpointer data)
 			{
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
-				priv->resources[taskCpy.x][taskCpy.y] = rTmp;
-				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+				priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y] = rTmp;
+				Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
 				r.inputError = true;
 				r.shapesSurfacePending = false;
 				bestIt->complete = true;
@@ -588,7 +616,7 @@ gpointer WorkerThread (gpointer data)
 				for(int x2=taskCpy.x-1; x2 <= taskCpy.x+1; x2++)
 				{
 					g_mutex_lock (priv->mutex);
-					map<int, Resource> &col = priv->resources[x2];
+					map<int, Resource> &col = priv->resources[taskCpy.zoom][x2];
 					labelList.push_back(col[y2].labelsByImportance);
 					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-taskCpy.x), 640.0*(y2-taskCpy.y)));
 					g_mutex_unlock (priv->mutex);
@@ -602,7 +630,7 @@ gpointer WorkerThread (gpointer data)
 			mapRender.RenderLabels(labelList, labelOffsets);
 
 			g_mutex_lock (priv->mutex);
-			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+			Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
 			r.labelsSurface = surface;
 			r.labelsSurfacePending = false;
 			bestIt->complete = true;
