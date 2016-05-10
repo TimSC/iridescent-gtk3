@@ -25,6 +25,7 @@ public:
 	LabelsByImportance labelsByImportance;
 	cairo_surface_t *labelsSurface, *shapesSurface;
 	bool inputError;
+	bool labelsSurfacePending, shapesSurfacePending;
 
 	Resource();
 	Resource(const class Resource &a);
@@ -34,7 +35,9 @@ public:
 Resource::Resource()
 {
 	labelsSurface = NULL;
+	labelsSurfacePending = false;
 	shapesSurface = NULL;
+	shapesSurfacePending = false;
 	inputError = false;
 }
 
@@ -43,6 +46,8 @@ Resource::Resource(const class Resource &a)
 	labelsSurface = a.labelsSurface;
 	shapesSurface = a.shapesSurface;
 	labelsByImportance = a.labelsByImportance;
+	labelsSurfacePending = a.labelsSurfacePending;
+	shapesSurfacePending = a.shapesSurfacePending;
 	inputError = a.inputError;
 }
 
@@ -61,9 +66,17 @@ Resource::~Resource()
 class WorkerThreadTask
 {
 public:
-	int type;
+	enum TaskType
+	{
+		TASK_INVALID,
+		TASK_SHAPES,
+		TASK_LABELS
+	};
+
+	TaskType type;
 	int x, y, zoom;
 	bool complete, assigned;
+	int priority;
 
 	WorkerThreadTask();
 	WorkerThreadTask(const class WorkerThreadTask &a);
@@ -73,10 +86,11 @@ public:
 
 WorkerThreadTask::WorkerThreadTask()
 {
-	type = 0;
+	type = TASK_INVALID;
 	x = 0;	
 	y = 0; 
 	zoom = 0;
+	priority = 0;
 	complete = false;
 	assigned = false;
 }
@@ -92,6 +106,7 @@ WorkerThreadTask& WorkerThreadTask::operator=(const WorkerThreadTask &arg)
 	x = arg.x;	
 	y = arg.y; 
 	zoom = arg.zoom;
+	priority = arg.priority;
 	complete = arg.complete;
 	assigned = arg.assigned;
 	return *this;
@@ -363,7 +378,58 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 	gtk_widget_get_allocation (widget,
                                &allocation);
 
-	cout << allocation.x <<","<< allocation.y <<","<< allocation.width <<","<< allocation.height <<","<< endl;
+	double halfWidthNumTiles = allocation.width / (640.0 * 2.0);
+	double halfHeightNumTiles = allocation.height / (640.0 * 2.0);
+
+	int minx = (int)floor(privateData->currentX - halfWidthNumTiles);
+	int maxx = (int)ceil(privateData->currentX + halfWidthNumTiles);
+	int miny = (int)floor(privateData->currentY - halfHeightNumTiles);
+	int maxy = (int)ceil(privateData->currentY + halfHeightNumTiles);
+
+	g_mutex_lock (privateData->mutex);
+	
+	//Tiles currently in view
+	for(int x = minx; x < maxx; x++)
+	{
+		//Ensure column exists
+		map<int, Resource> &col = privateData->resources[x];
+
+		for(int y = miny; y < maxy; y++)
+		{
+			Resource &r = col[y];
+			if(!r.shapesSurfacePending && r.shapesSurface == NULL)
+			{
+				r.shapesSurfacePending = true;
+				
+				WorkerThreadTask task;
+				task.x = x;
+				task.y = y;
+				task.zoom = 12;
+				task.type = WorkerThreadTask::TASK_SHAPES;
+				task.priority = 1;
+				privateData->taskList.push_back(task);
+			}
+
+			if(!r.labelsSurfacePending && r.labelsSurface == NULL)
+			{
+				r.labelsSurfacePending = true;
+				
+				WorkerThreadTask task;
+				task.x = x;
+				task.y = y;
+				task.zoom = 12;
+				task.type = WorkerThreadTask::TASK_LABELS;
+				task.priority = 2;
+				privateData->taskList.push_back(task);
+			}
+		}
+	}
+
+	//Check label tasks have appropriate prerequisite data to complete properly
+	
+
+	g_mutex_unlock (privateData->mutex);
+
 }
 
 gpointer WorkerThread (gpointer data)
@@ -374,55 +440,40 @@ gpointer WorkerThread (gpointer data)
 	g_mutex_unlock (priv->mutex);
 
 	CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
-	
-	g_mutex_lock (priv->mutex);
-	std::list<class WorkerThreadTask> &taskList = priv->taskList;
-	for(int x=2034; x <= 2036; x++)
-	{
-		for(int y=1372; y<= 1375; y++)
-		{
-			WorkerThreadTask task;
-			task.x = x;
-			task.y = y;
-			task.zoom = 12;
-			task.type = 1;
-			taskList.push_back(task);
-		}
-	}
-
-	for(int x=2035; x <= 2035; x++)
-	{
-		for(int y=1374; y<= 1374; y++)
-		{
-			WorkerThreadTask task;
-			task.x = x;
-			task.y = y;
-			task.zoom = 12;
-			task.type = 2;
-			taskList.push_back(task);
-		}
-	}
-
-	g_mutex_unlock (priv->mutex);
 
 	while (!stop)
 	{
-		//Check for unassigned tasks
 		g_mutex_lock (priv->mutex);
 		class WorkerThreadTask taskCpy; //Local copy of task
 		bool taskReady = false;
+		std::list<class WorkerThreadTask> &taskList = priv->taskList;
+		int highestPriority = 0;
+		bool highestPrioritySet = false;
+
+		//Find highest priority unassigned task
+		std::list<class WorkerThreadTask>::iterator bestIt = taskList.end();
 		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
 		{
 			if (it->complete || it->assigned) continue;
-			it->assigned = true;
-			taskCpy = *it;
+			if(highestPrioritySet && it->priority >= highestPriority) continue; //Task not urgent compared to others
+
+			//Candidate task found
+			bestIt = it;
+			highestPrioritySet = true;
+			highestPriority = it->priority;
+		}
+
+		if(bestIt != taskList.end())
+		{		
+			//Task found, mark it as assigned
+			bestIt->assigned = true;
+			taskCpy = *bestIt;
 			taskReady = true;
-			break;
 		}
 		g_mutex_unlock (priv->mutex);
 
 		//Perform task if one is available
-		if(taskReady && taskCpy.type == 1 && !taskCpy.complete)
+		if(taskReady && taskCpy.type == WorkerThreadTask::TASK_SHAPES && !taskCpy.complete)
 		{
 			// ** Draw shape layer **
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
@@ -454,6 +505,7 @@ gpointer WorkerThread (gpointer data)
 				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
 				r.labelsByImportance = organisedLabels;
 				r.shapesSurface = surface;
+				r.shapesSurfacePending = false;
 				g_mutex_unlock (priv->mutex);
 
 				gdk_threads_add_idle (iridescent_map_resources_changed, data);		
@@ -469,7 +521,7 @@ gpointer WorkerThread (gpointer data)
 			}
 		}
 
-		if(taskReady && taskCpy.type == 2 && !taskCpy.complete)
+		if(taskReady && taskCpy.type == WorkerThreadTask::TASK_LABELS && !taskCpy.complete)
 		{
 			// ** Draw labels layer **
 
@@ -497,6 +549,7 @@ gpointer WorkerThread (gpointer data)
 			g_mutex_lock (priv->mutex);
 			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
 			r.labelsSurface = surface;
+			r.labelsSurfacePending = false;
 			g_mutex_unlock (priv->mutex);
 
 			gdk_threads_add_idle (iridescent_map_resources_changed, data);
