@@ -77,6 +77,7 @@ public:
 	int x, y, zoom;
 	bool complete, assigned;
 	int priority;
+	uint64_t id;
 
 	WorkerThreadTask();
 	WorkerThreadTask(const class WorkerThreadTask &a);
@@ -90,6 +91,7 @@ WorkerThreadTask::WorkerThreadTask()
 	x = 0;	
 	y = 0; 
 	zoom = 0;
+	id = 0;
 	priority = 0;
 	complete = false;
 	assigned = false;
@@ -106,6 +108,7 @@ WorkerThreadTask& WorkerThreadTask::operator=(const WorkerThreadTask &arg)
 	x = arg.x;	
 	y = arg.y; 
 	zoom = arg.zoom;
+	id = arg.id;
 	priority = arg.priority;
 	complete = arg.complete;
 	assigned = arg.assigned;
@@ -130,6 +133,7 @@ public:
 	double currentX, currentY;
 	double preMoveX, preMoveY;
 	GtkWidget *parent;
+	uint64_t nextTaskId;
 
 	//Start of memory protected resources and controls
 	GThread *workerThread;
@@ -147,6 +151,7 @@ public:
 		this->currentY = 1374.0;
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
+		this->nextTaskId = 0;
 		this->stopWorker = false;
 		this->mutex = new GMutex;
 		g_mutex_init(this->mutex);
@@ -398,7 +403,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 		for(int y = miny; y < maxy; y++)
 		{
 			Resource &r = col[y];
-			if(!r.shapesSurfacePending && r.shapesSurface == NULL)
+			if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
 			{
 				r.shapesSurfacePending = true;
 				
@@ -408,10 +413,12 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				task.zoom = 12;
 				task.type = WorkerThreadTask::TASK_SHAPES;
 				task.priority = 1;
+				task.id = privateData->nextTaskId;
 				taskList.push_back(task);
+				privateData->nextTaskId ++;
 			}
 
-			if(!r.labelsSurfacePending && r.labelsSurface == NULL)
+			if(!r.labelsSurfacePending && r.labelsSurface == NULL && !r.inputError)
 			{
 				r.labelsSurfacePending = true;
 				
@@ -421,7 +428,9 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				task.zoom = 12;
 				task.type = WorkerThreadTask::TASK_LABELS;
 				task.priority = 2;
+				task.id = privateData->nextTaskId;
 				taskList.push_back(task);
+				privateData->nextTaskId ++;
 			}
 		}
 	}
@@ -439,7 +448,7 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 				//Label tasks must have the surrounding tiles ready
 				map<int, Resource> &col = privateData->resources[x];
 				Resource &r = col[y];
-				if(!r.shapesSurfacePending && r.shapesSurface == NULL)
+				if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
 				{
 					r.shapesSurfacePending = true;
 				
@@ -449,7 +458,9 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 					ntask.zoom = 12;
 					ntask.type = WorkerThreadTask::TASK_SHAPES;
 					ntask.priority = 1;
+					task.id = privateData->nextTaskId;
 					taskList.push_back(ntask);
+					privateData->nextTaskId ++;
 				}
 			}
 		}
@@ -538,6 +549,7 @@ gpointer WorkerThread (gpointer data)
 				r.labelsByImportance = organisedLabels;
 				r.shapesSurface = surface;
 				r.shapesSurfacePending = false;
+				bestIt->complete = true;
 				g_mutex_unlock (priv->mutex);
 
 				gdk_threads_add_idle (iridescent_map_resources_changed, data);		
@@ -549,6 +561,8 @@ gpointer WorkerThread (gpointer data)
 				priv->resources[taskCpy.x][taskCpy.y] = rTmp;
 				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
 				r.inputError = true;
+				r.shapesSurfacePending = false;
+				bestIt->complete = true;
 				g_mutex_unlock (priv->mutex);
 			}
 		}
@@ -582,6 +596,7 @@ gpointer WorkerThread (gpointer data)
 			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
 			r.labelsSurface = surface;
 			r.labelsSurfacePending = false;
+			bestIt->complete = true;
 			g_mutex_unlock (priv->mutex);
 
 			gdk_threads_add_idle (iridescent_map_resources_changed, data);
@@ -589,7 +604,19 @@ gpointer WorkerThread (gpointer data)
 		}
 
 		//Remove completed tasks
-		//TODO
+		g_mutex_lock (priv->mutex);
+		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end();)
+		{
+			class WorkerThreadTask &task = *it;
+			std::list<class WorkerThreadTask>::iterator prev = it;
+			it++;
+			if(prev->complete)
+			{
+				taskList.erase(prev);
+			}
+		}
+
+		g_mutex_unlock (priv->mutex);
 
 		//Wait for a while, unless signalled by a condition
 		gint64 end_time;
