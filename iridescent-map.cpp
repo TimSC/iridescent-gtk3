@@ -2,6 +2,7 @@
 #include "iridescent-map.h"
 #include <iostream>
 #include <cmath>
+#include <stdexcept>
 #include <fstream>
 
 #include "iridescent-map/LabelEngine.h"
@@ -23,6 +24,7 @@ class Resource
 public:
 	LabelsByImportance labelsByImportance;
 	cairo_surface_t *labelsSurface, *shapesSurface;
+	bool inputError;
 
 	Resource();
 	Resource(const class Resource &a);
@@ -33,6 +35,7 @@ Resource::Resource()
 {
 	labelsSurface = NULL;
 	shapesSurface = NULL;
+	inputError = false;
 }
 
 Resource::Resource(const class Resource &a)
@@ -40,6 +43,7 @@ Resource::Resource(const class Resource &a)
 	labelsSurface = a.labelsSurface;
 	shapesSurface = a.shapesSurface;
 	labelsByImportance = a.labelsByImportance;
+	inputError = a.inputError;
 }
 
 Resource::~Resource()
@@ -231,26 +235,26 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			
 			double dx = x - privateData->currentX;
 			double dy = y - privateData->currentY;
-			double px = round(dx * 640.0);
-			double py = round(dy * 640.0);
+			double px = round(dx * 640.0) + allocation.width/2;
+			double py = round(dy * 640.0) + allocation.height/2;
 
 			cairo_matrix_t mat;
 			cairo_matrix_init_translate (&mat, -px, -py);
+
+			cairo_move_to(cr, px, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py);
+			cairo_line_to(cr, px + 640, 
+						py + 640);
+			cairo_line_to(cr, px + 0, 
+						py + 640);
 
 			if(cairo_pattern_status(shapesPattern)==CAIRO_STATUS_SUCCESS)
 			{
 				cairo_pattern_set_matrix(shapesPattern, &mat);
 				cairo_set_source (cr, shapesPattern);
-
-				cairo_move_to(cr, px, 
-							py);
-				cairo_line_to(cr, px + 640, 
-							py);
-				cairo_line_to(cr, px + 640, 
-							py + 640);
-				cairo_line_to(cr, px + 0, 
-							py + 640);
-				cairo_fill (cr);
+				cairo_fill_preserve(cr);
 			}
 			cairo_pattern_destroy (shapesPattern);
 
@@ -258,16 +262,9 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			{
 				cairo_pattern_set_matrix(labelsPattern, &mat);
 				cairo_set_source (cr, labelsPattern);
-				cairo_move_to(cr, px, 
-							py);
-				cairo_line_to(cr, px + 640, 
-							py);
-				cairo_line_to(cr, px + 640, 
-							py + 640);
-				cairo_line_to(cr, px + 0, 
-							py + 640);
-				cairo_fill (cr);
+				cairo_fill_preserve(cr);
 			}
+			cairo_new_path (cr); //Clear current path
 			cairo_pattern_destroy (labelsPattern);
 
 		}
@@ -382,7 +379,7 @@ gpointer WorkerThread (gpointer data)
 	std::list<class WorkerThreadTask> &taskList = priv->taskList;
 	for(int x=2034; x <= 2036; x++)
 	{
-		for(int y=1373; y<= 1375; y++)
+		for(int y=1372; y<= 1375; y++)
 		{
 			WorkerThreadTask task;
 			task.x = x;
@@ -430,26 +427,46 @@ gpointer WorkerThread (gpointer data)
 			// ** Draw shape layer **
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			FeatureStore featureStore;
-			ReadInput(taskCpy.zoom, taskCpy.x, taskCpy.y, featureStore);
+			bool inputError = false;
+			try
+			{
+				ReadInput(taskCpy.zoom, taskCpy.x, taskCpy.y, featureStore);
+			}
+			catch(runtime_error &err)
+			{
+				inputError = true;
+			}
 
-			class SlippyTilesTransform slippyTilesTransform(taskCpy.zoom, taskCpy.x, taskCpy.y);
+			if(!inputError)
+			{
+				class SlippyTilesTransform slippyTilesTransform(taskCpy.zoom, taskCpy.x, taskCpy.y);
 
-			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
-			mapRender.SetCoastMap(coastMap);
-			LabelsByImportance organisedLabels;
+				class DrawLibCairoPango drawlib(surface);	
+				class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
+				mapRender.SetCoastMap(coastMap);
+				LabelsByImportance organisedLabels;
 
-			mapRender.Render(taskCpy.zoom, featureStore, true, true, slippyTilesTransform, organisedLabels);
+				mapRender.Render(taskCpy.zoom, featureStore, true, true, slippyTilesTransform, organisedLabels);
 
-			g_mutex_lock (priv->mutex);
-			class Resource rTmp;
-			priv->resources[taskCpy.x][taskCpy.y] = rTmp;
-			Resource &r = priv->resources[taskCpy.x][taskCpy.y];
-			r.labelsByImportance = organisedLabels;
-			r.shapesSurface = surface;
-			g_mutex_unlock (priv->mutex);
+				g_mutex_lock (priv->mutex);
+				class Resource rTmp;
+				priv->resources[taskCpy.x][taskCpy.y] = rTmp;
+				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+				r.labelsByImportance = organisedLabels;
+				r.shapesSurface = surface;
+				g_mutex_unlock (priv->mutex);
 
-			gdk_threads_add_idle (iridescent_map_resources_changed, data);		
+				gdk_threads_add_idle (iridescent_map_resources_changed, data);		
+			}
+			else
+			{
+				g_mutex_lock (priv->mutex);
+				class Resource rTmp;
+				priv->resources[taskCpy.x][taskCpy.y] = rTmp;
+				Resource &r = priv->resources[taskCpy.x][taskCpy.y];
+				r.inputError = true;
+				g_mutex_unlock (priv->mutex);
+			}
 		}
 
 		if(taskReady && taskCpy.type == 2 && !taskCpy.complete)
