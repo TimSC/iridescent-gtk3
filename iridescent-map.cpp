@@ -374,7 +374,7 @@ gboolean iridescent_map_scroll_event (GtkWidget *widget,
 	}
 	if(direction == GDK_SCROLL_DOWN)
 	{
-		if(privateData->currentZoom < 12.0)
+		if(privateData->currentZoom > 12.0)
 		{
 			privateData->currentZoom = round(privateData->currentZoom) - 1;
 			privateData->currentX /= 2;
@@ -561,7 +561,19 @@ gpointer WorkerThread (gpointer data)
 			bool inputError = false;
 			try
 			{
-				ReadInput(taskCpy.zoom, taskCpy.x, taskCpy.y, featureStore);
+				//Convert request to zoom level 12
+				int reqZoom = taskCpy.zoom;
+				int reqx = taskCpy.x;
+				int reqy = taskCpy.y;
+
+				while(reqZoom > 12)
+				{
+					reqZoom --;
+					reqx /= 2;
+					reqy /= 2;
+				}
+
+				ReadInput(reqZoom, reqx, reqy, featureStore);
 			}
 			catch(runtime_error &err)
 			{
