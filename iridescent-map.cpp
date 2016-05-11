@@ -559,21 +559,22 @@ gpointer WorkerThread (gpointer data)
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			FeatureStore featureStore;
 			bool inputError = false;
+			int dataZoom = taskCpy.zoom;
+			int datax = taskCpy.x;
+			int datay = taskCpy.y;
 			try
 			{
 				//Convert request to zoom level 12
 				int reqZoom = taskCpy.zoom;
-				int reqx = taskCpy.x;
-				int reqy = taskCpy.y;
-
 				while(reqZoom > 12)
 				{
 					reqZoom --;
-					reqx /= 2;
-					reqy /= 2;
+					datax /= 2;
+					datay /= 2;
 				}
 
-				ReadInput(reqZoom, reqx, reqy, featureStore);
+				ReadInput(reqZoom, datax, datay, featureStore);
+				dataZoom = reqZoom;
 			}
 			catch(runtime_error &err)
 			{
@@ -582,14 +583,12 @@ gpointer WorkerThread (gpointer data)
 
 			if(!inputError)
 			{
-				class SlippyTilesTransform slippyTilesTransform(taskCpy.zoom, taskCpy.x, taskCpy.y);
-
 				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
+				class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom, datax, datay, dataZoom);
 				mapRender.SetCoastMap(coastMap);
 				LabelsByImportance organisedLabels;
 
-				mapRender.Render(taskCpy.zoom, featureStore, true, true, slippyTilesTransform, organisedLabels);
+				mapRender.Render(taskCpy.zoom, featureStore, true, true, organisedLabels);
 
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
@@ -637,7 +636,7 @@ gpointer WorkerThread (gpointer data)
 
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom);
+			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom, taskCpy.x, taskCpy.y, taskCpy.zoom);
 			mapRender.SetCoastMap(coastMap);
 			mapRender.RenderLabels(labelList, labelOffsets);
 
