@@ -310,6 +310,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 
 			cairo_new_path (cr); //Clear current path
 			cairo_pattern_destroy (labelsPattern);
+			cairo_pattern_destroy (roughLabelsPattern);
 
 		}
 	}
