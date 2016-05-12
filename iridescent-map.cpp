@@ -26,6 +26,7 @@ public:
 	cairo_surface_t *roughLabelsSurface, *shapesSurface, *labelsSurface;
 	bool inputError;
 	bool labelsSurfacePending, shapesSurfacePending;
+	bool shapeTaskAssigned, labelTaskAssigned;
 
 	Resource();
 	Resource(const class Resource &a);
@@ -40,6 +41,8 @@ Resource::Resource()
 	labelsSurface = NULL;
 	labelsSurfacePending = false;
 	inputError = false;
+	shapeTaskAssigned = false;
+	labelTaskAssigned = false;
 }
 
 Resource::Resource(const class Resource &a)
@@ -52,6 +55,8 @@ Resource::Resource(const class Resource &a)
 	labelsSurfacePending = a.labelsSurfacePending;
 	shapesSurfacePending = a.shapesSurfacePending;
 	inputError = a.inputError;
+	shapeTaskAssigned = a.shapeTaskAssigned;
+	labelTaskAssigned = a.labelTaskAssigned;
 }
 
 Resource::~Resource()
@@ -69,86 +74,33 @@ Resource::~Resource()
 	labelsSurface = NULL;
 
 }
-// ************************************************************
-
-class WorkerThreadTask
-{
-public:
-	enum TaskType
-	{
-		TASK_INVALID,
-		TASK_SHAPES,
-		TASK_LABELS
-	};
-
-	TaskType type;
-	int x, y, zoom;
-	bool complete, assigned;
-	int priority;
-	uint64_t id;
-
-	WorkerThreadTask();
-	WorkerThreadTask(const class WorkerThreadTask &a);
-	WorkerThreadTask& operator=(const WorkerThreadTask &arg);
-	virtual ~WorkerThreadTask();
-};
-
-WorkerThreadTask::WorkerThreadTask()
-{
-	type = TASK_INVALID;
-	x = 0;	
-	y = 0; 
-	zoom = 0;
-	id = 0;
-	priority = 0;
-	complete = false;
-	assigned = false;
-}
-
-WorkerThreadTask::WorkerThreadTask(const class WorkerThreadTask &a)
-{
-	*this = a;
-}
-
-WorkerThreadTask& WorkerThreadTask::operator=(const WorkerThreadTask &arg)
-{
-	type = arg.type;
-	x = arg.x;	
-	y = arg.y; 
-	zoom = arg.zoom;
-	id = arg.id;
-	priority = arg.priority;
-	complete = arg.complete;
-	assigned = arg.assigned;
-	return *this;
-}
-
-WorkerThreadTask::~WorkerThreadTask()
-{
-
-}
 
 // ************************************************************
 typedef map<int, map<int, map<int, Resource> > > Resources; //First index is zoom, then x, then y
 gpointer WorkerThread (gpointer data);
 static void iridescent_map_view_changed (GtkWidget *widget);
+enum TaskType
+{
+	TASK_INVALID,
+	TASK_SHAPES,
+	TASK_LABELS
+};
 
 class _IridescentMapPrivate
 {
 public:
 	//Local variables (not thread safe!)
 	std::map<int, IntPair> pressPos;
-	double currentX, currentY, currentZoom;
 	double preMoveX, preMoveY, preZoom;
 	GtkWidget *parent;
-	uint64_t nextTaskId;
 
 	//Start of memory protected resources and controls
 	GThread *workerThread;
 	GMutex *mutex;
 	GCond *stopWorkerCond;
 	bool stopWorker;
-	std::list<class WorkerThreadTask> taskList;
+	double currentX, currentY, currentZoom;
+	std::vector<double> viewBbox; //left,bottom,right,top
 	Resources resources;
 	//End of memory protected resources
 
@@ -161,7 +113,6 @@ public:
 		this->preMoveX = 0.0;
 		this->preMoveY = 0.0;
 		this->preZoom = 0;
-		this->nextTaskId = 0;
 		this->stopWorker = false;
 		this->mutex = new GMutex;
 		g_mutex_init(this->mutex);
@@ -331,9 +282,11 @@ gboolean iridescent_map_button_press_event (GtkWidget *widget,
 	std::map<int, IntPair>::iterator it = privateData->pressPos.find(1);
 	if(it != privateData->pressPos.end())
 	{
+		g_mutex_lock (privateData->mutex);
 		privateData->preMoveX = privateData->currentX;
 		privateData->preMoveY = privateData->currentY;
 		privateData->preZoom = privateData->currentZoom;
+		g_mutex_unlock (privateData->mutex);
 	}
 
 	return true;
@@ -363,8 +316,10 @@ gboolean iridescent_map_motion_notify_event (GtkWidget *widget,
 		IntPair &startPos = it->second;
 		double dx = event->x - startPos.first;
 		double dy = event->y - startPos.second;
+		g_mutex_lock (privateData->mutex);
 		privateData->currentX = privateData->preMoveX - dx / 640.0;
 		privateData->currentY = privateData->preMoveY - dy / 640.0;
+		g_mutex_unlock (privateData->mutex);
 		iridescent_map_view_changed(widget);
 		gtk_widget_queue_draw (widget);
 	}
@@ -386,6 +341,7 @@ gboolean iridescent_map_scroll_event (GtkWidget *widget,
 	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
 
 	GdkScrollDirection &direction = event->direction;
+	g_mutex_lock (privateData->mutex);
 	if(direction == GDK_SCROLL_UP)
 	{
 		privateData->currentZoom = round(privateData->currentZoom) + 1;
@@ -401,8 +357,12 @@ gboolean iridescent_map_scroll_event (GtkWidget *widget,
 			privateData->currentY /= 2;
 		}
 	}
+	g_mutex_unlock (privateData->mutex);
 
+	//Plan what work needs doing at the new zoom level
 	iridescent_map_view_changed(widget);
+
+	//Trigger redraw
 	gtk_widget_queue_draw (widget);
 }
 
@@ -433,7 +393,7 @@ static gboolean iridescent_map_resources_changed (gpointer data)
 static void iridescent_map_view_changed (GtkWidget *widget)
 {
 	IridescentMap *self = IRIDESCENT_MAP(widget);
-	_IridescentMapPrivate *privateData = (_IridescentMapPrivate *)self->privateData;
+	_IridescentMapPrivate *priv = (_IridescentMapPrivate *)self->privateData;
 
 	GtkAllocation allocation;
 	gtk_widget_get_allocation (widget,
@@ -442,56 +402,73 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 	double halfWidthNumTiles = allocation.width / (640.0 * 2.0);
 	double halfHeightNumTiles = allocation.height / (640.0 * 2.0);
 
-	int minx = (int)floor(privateData->currentX - halfWidthNumTiles);
-	int maxx = (int)ceil(privateData->currentX + halfWidthNumTiles);
-	int miny = (int)floor(privateData->currentY - halfHeightNumTiles);
-	int maxy = (int)ceil(privateData->currentY + halfHeightNumTiles);
+	g_mutex_lock (priv->mutex);
+	int minx = priv->currentX - halfWidthNumTiles;
+	int maxx = priv->currentX + halfWidthNumTiles;
+	int miny = priv->currentY - halfHeightNumTiles;
+	int maxy = priv->currentY + halfHeightNumTiles;
 
-	g_mutex_lock (privateData->mutex);
-	std::list<class WorkerThreadTask> &taskList = privateData->taskList;	
-	map<int, map<int, Resource> > &resourcesAtZoom = privateData->resources[(int)round(privateData->currentZoom)];
+	priv->viewBbox.clear();
+	priv->viewBbox.push_back(minx);//left,bottom,right,top
+	priv->viewBbox.push_back(maxy);
+	priv->viewBbox.push_back(maxx);
+	priv->viewBbox.push_back(miny);
+	g_mutex_unlock (priv->mutex);
+	
+}
+
+void FindAvailableTask(class _IridescentMapPrivate *priv, enum TaskType &taskTypeOut, 
+	int &taskxOut, int &taskyOut, int &taskZoomOut)
+{
+	g_mutex_lock (priv->mutex);
+	if(priv->viewBbox.size() != 4)
+	{
+		g_mutex_unlock (priv->mutex);
+		return;
+	}
+	int minx = (int)floor(priv->viewBbox[0]);
+	int maxx = (int)ceil(priv->viewBbox[2]);
+	int miny = (int)floor(priv->viewBbox[3]);
+	int maxy = (int)ceil(priv->viewBbox[1]);
+	int roundedZoom = (int)round(priv->currentZoom);
+
+	map<int, map<int, Resource> > &resourcesAtZoom = priv->resources[roundedZoom];
 
 	//Tiles currently in view
-	for(int x = minx; x < maxx; x++)
+	for(int x = minx; x <= maxx; x++)
 	{
 		//Ensure column exists
 		map<int, Resource> &col = resourcesAtZoom[x];
 
-		for(int y = miny; y < maxy; y++)
+		for(int y = miny; y <= maxy; y++)
 		{
 			Resource &r = col[y];
 			if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
 			{
 				r.shapesSurfacePending = true;
 				
-				WorkerThreadTask task;
-				task.x = x;
-				task.y = y;
-				task.zoom = (int)round(privateData->currentZoom);
-				task.type = WorkerThreadTask::TASK_SHAPES;
-				task.priority = 1;
-				task.id = privateData->nextTaskId;
-				taskList.push_back(task);
-				privateData->nextTaskId ++;
+				taskxOut = x;
+				taskyOut = y;
+				taskZoomOut = roundedZoom;
+				taskTypeOut = TASK_SHAPES;
+				g_mutex_unlock (priv->mutex);
+				return;
 			}
 
-			if(!r.labelsSurfacePending && r.labelsSurface == NULL && !r.inputError)
+			/*if(!r.labelsSurfacePending && r.labelsSurface == NULL && !r.inputError)
 			{
 				r.labelsSurfacePending = true;
 				
-				WorkerThreadTask task;
 				task.x = x;
 				task.y = y;
 				task.zoom = (int)round(privateData->currentZoom);
 				task.type = WorkerThreadTask::TASK_LABELS;
 				task.priority = 2;
-				task.id = privateData->nextTaskId;
 				taskList.push_back(task);
-				privateData->nextTaskId ++;
-			}
+			}*/
 		}
 	}
-
+/*
 	//Check label tasks have appropriate prerequisite data to complete properly
 	for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
 	{
@@ -522,12 +499,13 @@ static void iridescent_map_view_changed (GtkWidget *widget)
 			}
 		}
 	}
-
+*/
 	//Limit the number of tiles in memory
 	//TODO
 
-	g_mutex_unlock (privateData->mutex);
+	
 
+	g_mutex_unlock (priv->mutex);
 }
 
 gpointer WorkerThread (gpointer data)
@@ -541,52 +519,25 @@ gpointer WorkerThread (gpointer data)
 
 	while (!stop)
 	{
-		g_mutex_lock (priv->mutex);
-		class WorkerThreadTask taskCpy; //Local copy of task
-		bool taskReady = false;
-		std::list<class WorkerThreadTask> &taskList = priv->taskList;
-		int highestPriority = 0;
-		bool highestPrioritySet = false;
-		unsigned int countUnassignedTasks = 0;
-
-		//Find highest priority unassigned task
-		std::list<class WorkerThreadTask>::iterator bestIt = taskList.end();
-		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
-		{
-			if (it->complete || it->assigned) continue;
-			countUnassignedTasks ++;
-			if(highestPrioritySet && it->priority >= highestPriority) continue; //Task not urgent compared to others
-
-			//Candidate task found
-			bestIt = it;
-			highestPrioritySet = true;
-			highestPriority = it->priority;
-		}
-
-		if(bestIt != taskList.end())
-		{		
-			//Task found, mark it as assigned
-			bestIt->assigned = true;
-			taskCpy = *bestIt;
-			taskReady = true;
-		}
-		g_mutex_unlock (priv->mutex);
+		int taskx = 0, tasky = 0, taskZoom = 0;
+		enum TaskType taskType = TASK_INVALID; 
+		FindAvailableTask(priv, taskType, taskx, tasky, taskZoom);
 
 		//Perform task if one is available
-		if(taskReady && taskCpy.type == WorkerThreadTask::TASK_SHAPES && !taskCpy.complete)
+		if(taskType == TASK_SHAPES)
 		{
 			// ** Draw shape layer **
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			cairo_surface_t *roughLabelsSurface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			FeatureStore featureStore;
 			bool inputError = false;
-			int dataZoom = taskCpy.zoom;
-			int datax = taskCpy.x;
-			int datay = taskCpy.y;
+			int dataZoom = taskZoom;
+			int datax = taskx;
+			int datay = tasky;
 			try
 			{
 				//Convert request to zoom level 12
-				int reqZoom = taskCpy.zoom;
+				int reqZoom = taskZoom;
 				while(reqZoom > 12)
 				{
 					reqZoom --;
@@ -605,16 +556,16 @@ gpointer WorkerThread (gpointer data)
 			if(!inputError)
 			{
 				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom, datax, datay, dataZoom);
+				class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, datax, datay, dataZoom);
 				mapRender.SetCoastMap(coastMap);
 				LabelsByImportance organisedLabels;
 
 				//Render shapes
-				mapRender.Render(taskCpy.zoom, featureStore, true, true, organisedLabels);
+				mapRender.Render(taskZoom, featureStore, true, true, organisedLabels);
 
 				//Do a rough render of labels
 				class DrawLibCairoPango drawlib2(roughLabelsSurface);
-				class MapRender roughLabelsRender(&drawlib2, taskCpy.x, taskCpy.y, taskCpy.zoom, datax, datay, dataZoom);
+				class MapRender roughLabelsRender(&drawlib2, taskx, tasky, taskZoom, datax, datay, dataZoom);
 				RenderLabelList labelList;
 				RenderLabelListOffsets labelOffsets;
 				labelList.push_back(organisedLabels);
@@ -623,13 +574,12 @@ gpointer WorkerThread (gpointer data)
 
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
-				priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y] = rTmp;
-				Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
+				priv->resources[taskZoom][taskx][tasky] = rTmp;
+				Resource &r = priv->resources[taskZoom][taskx][tasky];
 				r.labelsByImportance = organisedLabels;
 				r.shapesSurface = surface;
 				r.roughLabelsSurface = roughLabelsSurface;
 				r.shapesSurfacePending = false;
-				bestIt->complete = true;
 				g_mutex_unlock (priv->mutex);
 
 				gdk_threads_add_idle (iridescent_map_resources_changed, data);		
@@ -638,75 +588,58 @@ gpointer WorkerThread (gpointer data)
 			{
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
-				priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y] = rTmp;
-				Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
+				priv->resources[taskZoom][taskx][tasky] = rTmp;
+				Resource &r = priv->resources[taskZoom][taskx][tasky];
 				r.inputError = true;
 				r.shapesSurfacePending = false;
-				bestIt->complete = true;
 				g_mutex_unlock (priv->mutex);
 			}
 		}
 
-		if(taskReady && taskCpy.type == WorkerThreadTask::TASK_LABELS && !taskCpy.complete)
+		if(taskType == TASK_LABELS)
 		{
 			// ** Draw labels layer **
 
 			RenderLabelList labelList;
 			RenderLabelListOffsets labelOffsets;
 
-			for(int y2=taskCpy.y-1; y2<= taskCpy.y+1; y2++)
+			for(int y2=tasky-1; y2<= tasky+1; y2++)
 			{
-				for(int x2=taskCpy.x-1; x2 <= taskCpy.x+1; x2++)
+				for(int x2=taskx-1; x2 <= taskx+1; x2++)
 				{
 					g_mutex_lock (priv->mutex);
-					map<int, Resource> &col = priv->resources[taskCpy.zoom][x2];
+					map<int, Resource> &col = priv->resources[taskZoom][x2];
 					labelList.push_back(col[y2].labelsByImportance);
-					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-taskCpy.x), 640.0*(y2-taskCpy.y)));
+					labelOffsets.push_back(std::pair<double, double>(640.0*(x2-taskx), 640.0*(y2-tasky)));
 					g_mutex_unlock (priv->mutex);
 				}
 			}
 
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, taskCpy.x, taskCpy.y, taskCpy.zoom, taskCpy.x, taskCpy.y, taskCpy.zoom);
+			class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, taskx, tasky, taskZoom);
 			mapRender.SetCoastMap(coastMap);
 			mapRender.RenderLabels(labelList, labelOffsets);
 
 			g_mutex_lock (priv->mutex);
-			Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
+			Resource &r = priv->resources[taskZoom][taskx][tasky];
 			r.labelsSurface = surface;
 			r.labelsSurfacePending = false;
 			if(r.roughLabelsSurface != NULL)
 				cairo_surface_destroy(r.roughLabelsSurface);
 			r.roughLabelsSurface = NULL;
-			bestIt->complete = true;
 			g_mutex_unlock (priv->mutex);
 
 			gdk_threads_add_idle (iridescent_map_resources_changed, data);
 
 		}
 
-		//Remove completed tasks
-		g_mutex_lock (priv->mutex);
-		for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end();)
-		{
-			class WorkerThreadTask &task = *it;
-			std::list<class WorkerThreadTask>::iterator prev = it;
-			it++;
-			if(prev->complete)
-			{
-				taskList.erase(prev);
-			}
-		}
-
-		g_mutex_unlock (priv->mutex);
-
 		//Wait for a while, unless signalled by a condition
 		gint64 end_time;
-		if(countUnassignedTasks == 0)
-			end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND;
+		if(taskType == TASK_INVALID)
+			end_time = g_get_monotonic_time () + 1 * G_TIME_SPAN_SECOND; //Slow wait
 		else
-			end_time = g_get_monotonic_time () + 10 * G_TIME_SPAN_MILLISECOND;
+			end_time = g_get_monotonic_time () + 10 * G_TIME_SPAN_MILLISECOND; //Fast wait
 
 		g_mutex_lock (priv->mutex);
 		g_cond_wait_until (priv->stopWorkerCond,
