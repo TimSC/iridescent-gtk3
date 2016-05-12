@@ -454,52 +454,55 @@ void FindAvailableTask(class _IridescentMapPrivate *priv, enum TaskType &taskTyp
 				g_mutex_unlock (priv->mutex);
 				return;
 			}
-
-			/*if(!r.labelsSurfacePending && r.labelsSurface == NULL && !r.inputError)
-			{
-				r.labelsSurfacePending = true;
-				
-				task.x = x;
-				task.y = y;
-				task.zoom = (int)round(privateData->currentZoom);
-				task.type = WorkerThreadTask::TASK_LABELS;
-				task.priority = 2;
-				taskList.push_back(task);
-			}*/
 		}
 	}
-/*
-	//Check label tasks have appropriate prerequisite data to complete properly
-	for(std::list<class WorkerThreadTask>::iterator it = taskList.begin(); it!=taskList.end(); it++)
+
+	//Tiles in view + a further tile in all directions
+	for(int x = minx-1; x <= maxx+1; x++)
 	{
-		class WorkerThreadTask &task = *it;
-		if(task.type != WorkerThreadTask::TASK_LABELS) continue;
-		
-		for(int x = task.x - 1; x <= task.x + 1; x++)
+		//Ensure column exists
+		map<int, Resource> &col = resourcesAtZoom[x];
+
+		for(int y = miny-1; y <= maxy+1; y++)
 		{
-			for(int y = task.y - 1; y <= task.y + 1; y++)
+			Resource &r = col[y];
+			if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
 			{
-				//Label tasks must have the surrounding tiles ready
-				map<int, Resource> &col = resourcesAtZoom[x];
-				Resource &r = col[y];
-				if(!r.shapesSurfacePending && r.shapesSurface == NULL && !r.inputError)
-				{
-					r.shapesSurfacePending = true;
+				r.shapesSurfacePending = true;
 				
-					WorkerThreadTask ntask;
-					ntask.x = x;
-					ntask.y = y;
-					ntask.zoom = (int)round(privateData->currentZoom);
-					ntask.type = WorkerThreadTask::TASK_SHAPES;
-					ntask.priority = 1;
-					task.id = privateData->nextTaskId;
-					taskList.push_back(ntask);
-					privateData->nextTaskId ++;
-				}
+				taskxOut = x;
+				taskyOut = y;
+				taskZoomOut = roundedZoom;
+				taskTypeOut = TASK_SHAPES;
+				g_mutex_unlock (priv->mutex);
+				return;
 			}
 		}
 	}
-*/
+
+	//Tiles currently in view
+	for(int x = minx; x <= maxx; x++)
+	{
+		//Ensure column exists
+		map<int, Resource> &col = resourcesAtZoom[x];
+
+		for(int y = miny; y <= maxy; y++)
+		{
+			Resource &r = col[y];
+			if(!r.labelsSurfacePending && r.labelsSurface == NULL && !r.inputError)
+			{
+				r.labelsSurfacePending = true;
+				
+				taskxOut = x;
+				taskyOut = y;
+				taskZoomOut = roundedZoom;
+				taskTypeOut = TASK_LABELS;
+				g_mutex_unlock (priv->mutex);
+				return;
+			}
+		}
+	}
+
 	//Limit the number of tiles in memory
 	//TODO
 
