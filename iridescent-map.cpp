@@ -188,6 +188,21 @@ void iridescent_map_get_preferred_width(GtkWidget *widget,
 	*natural_width = 100;
 }
 
+void draw_at_alternate_zoom(cairo_t *cr, Resources &r, int x, int y, int zoom)
+{
+	//Memory protected variables already locked by iridescent_map_draw!
+	int altx = x, alty = y, altZoom = zoom;
+	altZoom --;
+	altx /= 2;
+	alty /= 2;
+	
+	/*Resources::iterator zoomIt = privateData->resources.find(altzoom);
+	if(zoomIt != privateData->resources.end())
+	{
+		
+	}*/
+}
+
 gboolean iridescent_map_draw(GtkWidget *widget,
                                 cairo_t *cr)
 {
@@ -200,17 +215,26 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 	cairo_save(cr);
 	
 	g_mutex_lock (privateData->mutex);
-	map<int, map<int, Resource> > &resourcesAtZoom = privateData->resources[(int)round(privateData->currentZoom)];
+	int minx = (int)floor(privateData->viewBbox[0]);
+	int maxx = (int)ceil(privateData->viewBbox[2]);
+	int miny = (int)floor(privateData->viewBbox[3]);
+	int maxy = (int)ceil(privateData->viewBbox[1]);
+	int roundedZoom = (int)round(privateData->currentZoom);
+	map<int, map<int, Resource> > &resourcesAtZoom = privateData->resources[roundedZoom];
 	
-	for(map<int, map<int, Resource> >::iterator it = resourcesAtZoom.begin();
-		it != resourcesAtZoom.end(); it++)
+	//Tiles currently in view
+	for(int x = minx; x <= maxx; x++)
 	{
-		int x = it->first;
-		for(map<int, Resource>::iterator it2 = it->second.begin();
-			it2 != it->second.end(); it2++)
+		map<int, map<int, Resource> >::iterator it = resourcesAtZoom.find(x);
+		if(it == resourcesAtZoom.end()) continue;
+		map<int, Resource> &col = it->second;
+
+		for(int y = miny; y <= maxy; y++)
 		{
-			int y = it2->first;
-			class Resource &r = it2->second;
+			map<int, Resource>::iterator it2 = col.find(y);
+			if(it2 == col.end()) continue;
+			Resource &r = it2->second;
+
 			cairo_surface_t *shapesSurface = r.shapesSurface;
 			cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
 
@@ -242,6 +266,10 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 				cairo_pattern_set_matrix(shapesPattern, &mat);
 				cairo_set_source (cr, shapesPattern);
 				cairo_fill_preserve(cr);
+			}
+			else
+			{
+				draw_at_alternate_zoom(cr, privateData->resources, x, y, roundedZoom);
 			}
 			cairo_pattern_destroy (shapesPattern);
 
