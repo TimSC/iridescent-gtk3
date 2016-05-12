@@ -188,19 +188,48 @@ void iridescent_map_get_preferred_width(GtkWidget *widget,
 	*natural_width = 100;
 }
 
-void draw_at_alternate_zoom(cairo_t *cr, Resources &r, int x, int y, int zoom)
+void draw_at_alternate_zoom(cairo_t *cr, Resources &resources, int x, int y, double px, double py, int zoom)
 {
 	//Memory protected variables already locked by iridescent_map_draw!
 	int altx = x, alty = y, altZoom = zoom;
 	altZoom --;
+	int altxrem = x % 2;
 	altx /= 2;
+	int altyrem = y % 2;
 	alty /= 2;
 	
-	/*Resources::iterator zoomIt = privateData->resources.find(altzoom);
-	if(zoomIt != privateData->resources.end())
+	Resources::iterator zoomIt = resources.find(altZoom);
+	if(zoomIt != resources.end())
 	{
-		
-	}*/
+		map<int, map<int, Resource> > &resourcesAtZoom = zoomIt->second;
+		map<int, map<int, Resource> >::iterator it = resourcesAtZoom.find(altx);
+		if(it != resourcesAtZoom.end())
+		{
+			map<int, Resource> &col = it->second;
+			map<int, Resource>::iterator it2 = col.find(alty);
+			if(it2 != col.end())
+			{
+				Resource &r = it2->second;
+				cairo_surface_t *shapesSurface = r.shapesSurface;
+				cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
+				
+				if(cairo_pattern_status(shapesPattern)==CAIRO_STATUS_SUCCESS)
+				{
+					cairo_matrix_t mat;
+					cairo_matrix_init_scale (&mat,
+										0.5,
+										0.5);
+					cairo_matrix_translate (&mat, -px + altxrem * 640, -py + altyrem * 640);
+
+					cairo_pattern_set_matrix(shapesPattern, &mat);
+					cairo_set_source (cr, shapesPattern);
+					cairo_fill_preserve(cr);
+				}
+
+				cairo_pattern_destroy (shapesPattern);
+			}
+		}
+	}
 }
 
 gboolean iridescent_map_draw(GtkWidget *widget,
@@ -225,15 +254,11 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 	//Tiles currently in view
 	for(int x = minx; x <= maxx; x++)
 	{
-		map<int, map<int, Resource> >::iterator it = resourcesAtZoom.find(x);
-		if(it == resourcesAtZoom.end()) continue;
-		map<int, Resource> &col = it->second;
+		map<int, Resource> &col = resourcesAtZoom[x];
 
 		for(int y = miny; y <= maxy; y++)
 		{
-			map<int, Resource>::iterator it2 = col.find(y);
-			if(it2 == col.end()) continue;
-			Resource &r = it2->second;
+			Resource &r = col[y];
 
 			cairo_surface_t *shapesSurface = r.shapesSurface;
 			cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
@@ -269,7 +294,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			}
 			else
 			{
-				draw_at_alternate_zoom(cr, privateData->resources, x, y, roundedZoom);
+				draw_at_alternate_zoom(cr, privateData->resources, x, y, px, py, roundedZoom);
 			}
 			cairo_pattern_destroy (shapesPattern);
 
