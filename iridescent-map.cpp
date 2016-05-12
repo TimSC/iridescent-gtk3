@@ -85,6 +85,12 @@ enum TaskType
 	TASK_SHAPES,
 	TASK_LABELS
 };
+enum WidgetLayers
+{
+	WIDGET_LAYER_SHAPES,
+	WIDGET_LAYER_ROUGH_LABELS,
+	WIDGET_LAYER_LABELS
+};
 
 class _IridescentMapPrivate
 {
@@ -188,9 +194,10 @@ void iridescent_map_get_preferred_width(GtkWidget *widget,
 	*natural_width = 100;
 }
 
-void draw_at_alternate_zoom(cairo_t *cr, Resources &resources, int x, int y, double px, double py, int zoom)
+bool draw_at_alternate_zoom(cairo_t *cr, Resources &resources, int x, int y, double px, double py, int zoom, int layer)
 {
 	//Memory protected variables already locked by iridescent_map_draw!
+	bool foundAlt = false;
 	int altx = x, alty = y, altZoom = zoom;
 	altZoom --;
 	int altxrem = x % 2;
@@ -210,10 +217,13 @@ void draw_at_alternate_zoom(cairo_t *cr, Resources &resources, int x, int y, dou
 			if(it2 != col.end())
 			{
 				Resource &r = it2->second;
-				cairo_surface_t *shapesSurface = r.shapesSurface;
-				cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
+				cairo_surface_t *surface = NULL;
+				if(layer == WIDGET_LAYER_SHAPES) surface = r.shapesSurface;
+				if(layer == WIDGET_LAYER_LABELS) surface = r.labelsSurface;
+				if(layer == WIDGET_LAYER_ROUGH_LABELS) surface = r.roughLabelsSurface;
+				cairo_pattern_t *pattern = cairo_pattern_create_for_surface (surface);
 				
-				if(cairo_pattern_status(shapesPattern)==CAIRO_STATUS_SUCCESS)
+				if(cairo_pattern_status(pattern)==CAIRO_STATUS_SUCCESS)
 				{
 					cairo_matrix_t mat;
 					cairo_matrix_init_scale (&mat,
@@ -221,15 +231,19 @@ void draw_at_alternate_zoom(cairo_t *cr, Resources &resources, int x, int y, dou
 										0.5);
 					cairo_matrix_translate (&mat, -px + altxrem * 640, -py + altyrem * 640);
 
-					cairo_pattern_set_matrix(shapesPattern, &mat);
-					cairo_set_source (cr, shapesPattern);
+					cairo_pattern_set_matrix(pattern, &mat);
+					cairo_set_source (cr, pattern);
 					cairo_fill_preserve(cr);
+					foundAlt = true;
 				}
 
-				cairo_pattern_destroy (shapesPattern);
+				cairo_pattern_destroy (pattern);
+				if(foundAlt)
+					return foundAlt;
 			}
 		}
 	}
+	return false;
 }
 
 gboolean iridescent_map_draw(GtkWidget *widget,
@@ -294,7 +308,7 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			}
 			else
 			{
-				draw_at_alternate_zoom(cr, privateData->resources, x, y, px, py, roundedZoom);
+				bool drawn = draw_at_alternate_zoom(cr, privateData->resources, x, y, px, py, roundedZoom, WIDGET_LAYER_SHAPES);
 			}
 			cairo_pattern_destroy (shapesPattern);
 
@@ -310,6 +324,12 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 				cairo_pattern_set_matrix(roughLabelsPattern, &mat);
 				cairo_set_source (cr, roughLabelsPattern);
 				cairo_fill_preserve(cr);
+			}
+			else
+			{
+				bool drawn = draw_at_alternate_zoom(cr, privateData->resources, x, y, px, py, roundedZoom, WIDGET_LAYER_LABELS);
+				if(!drawn)
+					drawn = draw_at_alternate_zoom(cr, privateData->resources, x, y, px, py, roundedZoom, WIDGET_LAYER_ROUGH_LABELS);
 			}
 
 			cairo_new_path (cr); //Clear current path
