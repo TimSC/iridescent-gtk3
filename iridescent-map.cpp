@@ -23,7 +23,7 @@ class Resource
 {
 public:
 	LabelsByImportance labelsByImportance;
-	cairo_surface_t *labelsSurface, *shapesSurface;
+	cairo_surface_t *roughLabelsSurface, *shapesSurface, *labelsSurface;
 	bool inputError;
 	bool labelsSurfacePending, shapesSurfacePending;
 
@@ -34,17 +34,20 @@ public:
 
 Resource::Resource()
 {
-	labelsSurface = NULL;
-	labelsSurfacePending = false;
 	shapesSurface = NULL;
 	shapesSurfacePending = false;
+	roughLabelsSurface= NULL;
+	labelsSurface = NULL;
+	labelsSurfacePending = false;
 	inputError = false;
 }
 
 Resource::Resource(const class Resource &a)
 {
-	labelsSurface = a.labelsSurface;
 	shapesSurface = a.shapesSurface;
+	roughLabelsSurface = a.roughLabelsSurface;
+	labelsSurface = a.labelsSurface;
+
 	labelsByImportance = a.labelsByImportance;
 	labelsSurfacePending = a.labelsSurfacePending;
 	shapesSurfacePending = a.shapesSurfacePending;
@@ -54,12 +57,17 @@ Resource::Resource(const class Resource &a)
 Resource::~Resource()
 {
 	labelsByImportance.clear();
-	if(labelsSurface != NULL)
-		cairo_surface_destroy(labelsSurface);
-	labelsSurface = NULL;
+
 	if(shapesSurface != NULL)
 		cairo_surface_destroy(shapesSurface);
 	shapesSurface = NULL;
+	if(roughLabelsSurface != NULL)
+		cairo_surface_destroy(roughLabelsSurface);
+	roughLabelsSurface = NULL;
+	if(labelsSurface != NULL)
+		cairo_surface_destroy(labelsSurface);
+	labelsSurface = NULL;
+
 }
 // ************************************************************
 
@@ -255,6 +263,9 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 			cairo_surface_t *shapesSurface = r.shapesSurface;
 			cairo_pattern_t *shapesPattern = cairo_pattern_create_for_surface (shapesSurface);
 
+			cairo_surface_t *roughLabelsSurface = r.roughLabelsSurface;
+			cairo_pattern_t *roughLabelsPattern = cairo_pattern_create_for_surface (roughLabelsSurface);
+
 			cairo_surface_t *labelsSurface = r.labelsSurface;
 			cairo_pattern_t *labelsPattern = cairo_pattern_create_for_surface (labelsSurface);
 			
@@ -289,6 +300,14 @@ gboolean iridescent_map_draw(GtkWidget *widget,
 				cairo_set_source (cr, labelsPattern);
 				cairo_fill_preserve(cr);
 			}
+			else if (cairo_pattern_status(roughLabelsPattern)==CAIRO_STATUS_SUCCESS)
+			{
+				//If final labels are not ready, use rough labels
+				cairo_pattern_set_matrix(roughLabelsPattern, &mat);
+				cairo_set_source (cr, roughLabelsPattern);
+				cairo_fill_preserve(cr);
+			}
+
 			cairo_new_path (cr); //Clear current path
 			cairo_pattern_destroy (labelsPattern);
 
@@ -557,6 +576,7 @@ gpointer WorkerThread (gpointer data)
 		{
 			// ** Draw shape layer **
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
+			cairo_surface_t *roughLabelsSurface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			FeatureStore featureStore;
 			bool inputError = false;
 			int dataZoom = taskCpy.zoom;
@@ -588,7 +608,17 @@ gpointer WorkerThread (gpointer data)
 				mapRender.SetCoastMap(coastMap);
 				LabelsByImportance organisedLabels;
 
+				//Render shapes
 				mapRender.Render(taskCpy.zoom, featureStore, true, true, organisedLabels);
+
+				//Do a rough render of labels
+				class DrawLibCairoPango drawlib2(roughLabelsSurface);
+				class MapRender roughLabelsRender(&drawlib2, taskCpy.x, taskCpy.y, taskCpy.zoom, datax, datay, dataZoom);
+				RenderLabelList labelList;
+				RenderLabelListOffsets labelOffsets;
+				labelList.push_back(organisedLabels);
+				labelOffsets.push_back(std::pair<double, double>(0.0, 0.0));
+				roughLabelsRender.RenderLabels(labelList, labelOffsets);
 
 				g_mutex_lock (priv->mutex);
 				class Resource rTmp;
@@ -596,6 +626,7 @@ gpointer WorkerThread (gpointer data)
 				Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
 				r.labelsByImportance = organisedLabels;
 				r.shapesSurface = surface;
+				r.roughLabelsSurface = roughLabelsSurface;
 				r.shapesSurfacePending = false;
 				bestIt->complete = true;
 				g_mutex_unlock (priv->mutex);
@@ -644,6 +675,9 @@ gpointer WorkerThread (gpointer data)
 			Resource &r = priv->resources[taskCpy.zoom][taskCpy.x][taskCpy.y];
 			r.labelsSurface = surface;
 			r.labelsSurfacePending = false;
+			if(r.roughLabelsSurface != NULL)
+				cairo_surface_destroy(r.roughLabelsSurface);
+			r.roughLabelsSurface = NULL;
 			bestIt->complete = true;
 			g_mutex_unlock (priv->mutex);
 
