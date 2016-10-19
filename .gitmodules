@@ -1,3 +1,6 @@
 [submodule "iridescent-map"]
 	path = iridescent-map
 	url = https://github.com/TimSC/iridescent-map.git
+[submodule "iridescent-testdata"]
+	path = iridescent-testdata
+	url = https://github.com/TimSC/iridescent-testdata.git

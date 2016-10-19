@@ -591,7 +591,7 @@ gpointer WorkerThread (gpointer data)
 	bool stop = priv->stopWorker;
 	g_mutex_unlock (priv->mutex);
 
-	CoastMap coastMap("fosm-coast-earth201507161012.bin", 12);
+	CoastMap coastMap("iridescent-testdata/map.bin", 12);
 
 	while (!stop)
 	{
@@ -621,7 +621,7 @@ gpointer WorkerThread (gpointer data)
 					datay /= 2;
 				}
 
-				ReadInput(reqZoom, datax, datay, featureStore);
+				ReadInput(reqZoom, "iridescent-testdata", datax, datay, featureStore);
 				dataZoom = reqZoom;
 			}
 			catch(runtime_error &err)
