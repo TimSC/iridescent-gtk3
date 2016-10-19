@@ -592,6 +592,7 @@ gpointer WorkerThread (gpointer data)
 	g_mutex_unlock (priv->mutex);
 
 	CoastMap coastMap("iridescent-testdata/map.bin", 12);
+	string resourceFilePath = "iridescent-testdata/";
 
 	while (!stop)
 	{
@@ -632,7 +633,7 @@ gpointer WorkerThread (gpointer data)
 			if(!inputError)
 			{
 				class DrawLibCairoPango drawlib(surface);	
-				class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, datax, datay, dataZoom);
+				class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, datax, datay, dataZoom, resourceFilePath.c_str());
 				mapRender.SetCoastMap(coastMap);
 				LabelsByImportance organisedLabels;
 
@@ -641,7 +642,7 @@ gpointer WorkerThread (gpointer data)
 
 				//Do a rough render of labels
 				class DrawLibCairoPango drawlib2(roughLabelsSurface);
-				class MapRender roughLabelsRender(&drawlib2, taskx, tasky, taskZoom, datax, datay, dataZoom);
+				class MapRender roughLabelsRender(&drawlib2, taskx, tasky, taskZoom, datax, datay, dataZoom, resourceFilePath.c_str());
 				RenderLabelList labelList;
 				RenderLabelListOffsets labelOffsets;
 				labelList.push_back(organisedLabels);
@@ -693,7 +694,7 @@ gpointer WorkerThread (gpointer data)
 
 			cairo_surface_t *surface = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 640, 640);
 			class DrawLibCairoPango drawlib(surface);	
-			class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, taskx, tasky, taskZoom);
+			class MapRender mapRender(&drawlib, taskx, tasky, taskZoom, taskx, tasky, taskZoom, resourceFilePath.c_str());
 			mapRender.SetCoastMap(coastMap);
 			mapRender.RenderLabels(labelList, labelOffsets);
 
