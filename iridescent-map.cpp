@@ -627,6 +627,7 @@ gpointer WorkerThread (gpointer data)
 			}
 			catch(runtime_error &err)
 			{
+				cout << "Error reading input: " << err.what() << endl;
 				inputError = true;
 			}
 
