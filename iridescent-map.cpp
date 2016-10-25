@@ -591,7 +591,7 @@ gpointer WorkerThread (gpointer data)
 	bool stop = priv->stopWorker;
 	g_mutex_unlock (priv->mutex);
 
-	CoastMap coastMap("iridescent-testdata/map.bin", 12);
+	CoastMap coastMap("iridescent-testdata/map.bin");
 	string resourceFilePath = "iridescent-testdata/";
 
 	while (!stop)
