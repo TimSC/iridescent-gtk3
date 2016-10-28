@@ -1,5 +1,5 @@
 #include <gtk/gtk.h>
-#include "iridescent-map.h"
+#include "gtk-iridescent-map.h"
 
 static void
 activate (GtkApplication* app,

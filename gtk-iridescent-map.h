@@ -1,5 +1,5 @@
-#ifndef __IRIDESCENT_MAP_WIDGET_H__
-#define __IRIDESCENT_MAP_WIDGET_H__
+#ifndef __GTK_IRIDESCENT_MAP_WIDGET_H__
+#define __GTK_IRIDESCENT_MAP_WIDGET_H__
 
 #include <gtk/gtk.h>
 
@@ -29,5 +29,5 @@ GType iridescent_map_get_type(void);
 
 //GtkWidget* iridescent_map_new(void);
 
-#endif //IRIDESCENT_MAP_WIDGET
+#endif //GTK_IRIDESCENT_MAP_WIDGET
 

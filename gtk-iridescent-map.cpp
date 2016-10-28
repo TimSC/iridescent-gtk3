@@ -1,5 +1,5 @@
 #include <gtk/gtk.h>
-#include "iridescent-map.h"
+#include "gtk-iridescent-map.h"
 #include <iostream>
 #include <cmath>
 #include <stdexcept>
@@ -7,7 +7,7 @@
 
 #include "iridescent-map/LabelEngine.h"
 #include "iridescent-map/Regrouper.h"
-#include "iridescent-map/ReadInput.h"
+#include "iridescent-map/ReadInputO5m.h"
 #include "iridescent-map/Transform.h"
 #include "iridescent-map/drawlib/drawlibcairo.h"
 #include "iridescent-map/MapRender.h"
@@ -622,7 +622,7 @@ gpointer WorkerThread (gpointer data)
 					datay /= 2;
 				}
 
-				ReadInput(reqZoom, "iridescent-testdata", datax, datay, featureStore);
+				ReadInputO5m(reqZoom, "iridescent-testdata", datax, datay, featureStore);
 				dataZoom = reqZoom;
 			}
 			catch(runtime_error &err)
